@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest package="com.anzhi.core">
+    <uses-permission android:name="android.permission.INJECT_EVENTS" />
+    <uses-permission android:name="android.permission.READ_FRAME_BUFFER" />
+    <application android:label="Anzhi Core Services">
+        <service
+            android:name=".AnzhiCoreService"
+            android:exported="true"
+            android:process=":core" />
+    </application>
+</manifest>

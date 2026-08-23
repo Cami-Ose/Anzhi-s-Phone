@@ -1,0 +1,13 @@
+OpenCyvis
+Copyright 2026 OpenCyvis Contributors
+
+Anzhi's Phone contains source code derived from OpenCyvis. The affected files are listed in ../COPYRIGHT.md.
+
+Upstream project: https://github.com/flankerhqd/opencyvis-phone
+Upstream license: Apache License 2.0
+
+The OpenCyvis-derived portions retain the permissions and conditions of the Apache License 2.0. Modified files should carry notices identifying the changes. The upstream copyright, license, and attribution notices must be preserved when the affected portions are redistributed.
+
+This snapshot does not include OpenCyvis speech-recognition models or its bundled Android dependency artifacts. Any AOSP, AndroidX, Kotlin, OkHttp, Room, ONNX Runtime, or other third-party material used in a complete build retains its own upstream license.
+
+This notice does not grant permission to use OpenCyvis branding or imply endorsement by OpenCyvis contributors.

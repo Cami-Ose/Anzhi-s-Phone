@@ -1,0 +1,5 @@
+# 安知手机 后端依赖
+aiohttp>=3.9.0              # WebSocket 服务 + HTTP 客户端
+python-dotenv>=1.0.0        # .env 环境变量加载
+pytest>=8.0.0               # 测试框架
+pytest-asyncio>=0.23.0      # 异步测试支持

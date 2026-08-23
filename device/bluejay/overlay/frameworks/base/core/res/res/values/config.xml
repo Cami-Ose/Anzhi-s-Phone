@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  =============================================================================
+  Anzhi's Phone — config.xml 覆盖（frameworks/base/core/res/res/values/config.xml）
+  =============================================================================
+
+  安装路径：device/bluejay/overlay/frameworks/base/core/res/res/values/config.xml
+
+  用途：覆盖 AOSP 默认配置：
+    1. Doze 白名单预埋（陷阱 13：Deep Doze 冻结闹钟）
+       把 com.anzhi.os 加入 deviceidle.xml 白名单，AlarmManager 定时器
+       在深度休眠模式下仍然触发，不会被内核挂起。
+    2. Notification Assistant 默认启用列表
+       开机自动注册 com.anzhi.os 为通知助理，无需 Cami 手动去设置里点选。
+    3. Accessibility Service 默认启用列表
+       开机自动启用 com.anzhi.os/.AnzhiAccessibility，无需手动开。
+
+  合并方式：
+    方法 A（推荐）：device tree overlay
+      在 device/google/bluejay/device.mk 中添加：
+        DEVICE_PACKAGE_OVERLAYS += device/google/bluejay/overlay
+
+    方法 B：直接修改 frameworks/base/core/res/res/values/config.xml
+      （需要 fork frameworks/base，不推荐）
+
+  注意：config.xml 是 Android 资源文件，只需覆盖需要改的数组项。
+        overlay 会自动合并 AOSP 默认值和安知自定义值。
+  =============================================================================
+-->
+
+<resources>
+
+    <!-- ────────────────────────────────────────────────
+         Doze 白名单预埋（陷阱 13 防御）
+         安知核心服务进程写入系统 deviceidle.xml 白名单
+         等效命令：adb shell dumpsys deviceidle whitelist +com.anzhi.os
+         作用：AnzhiWakeManager/AlarmManager 定时器在 Deep Doze
+              时仍然可以触发，WebSocket 心跳不会被内核掐断
+        ──────────────────────────────────────────────── -->
+    <string-array name="config_deviceIdleWhitelist" translatable="false">
+        <item>com.anzhi.os</item>
+    </string-array>
+
+    <!-- ────────────────────────────────────────────────
+         Notification Assistant 默认启用列表
+         等效于把 anzhi_assistant_grant.xml 打入
+         /system/etc/default-permissions/（该文件已处理）
+         此为双保险——两种方法都配上
+        ──────────────────────────────────────────────── -->
+    <string-array name="config_defaultEnabledNotificationAssistants" translatable="false">
+        <item>com.anzhi.os/.AnzhiNotificationAssistant</item>
+    </string-array>
+
+    <!-- ────────────────────────────────────────────────
+         Accessibility Service 默认启用列表
+         Step 8: AnzhiAccessibility 开机自启
+        ──────────────────────────────────────────────── -->
+    <string-array name="config_defaultAccessibilityService" translatable="false">
+        <item>com.anzhi.os/.AnzhiAccessibility</item>
+    </string-array>
+
+</resources>

@@ -1,0 +1,1224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>安知手机 · 仪表盘</title>
+<style>
+@font-face {
+  font-family: "FusionPixel";
+  src: url("file:///android_asset/fusion-pixel.otf") format("opentype");
+  font-display: swap;
+}
+
+:root {
+  --bg: #0a0a0b;
+  --surface: rgba(20,22,26,0.85);
+  --accent: #8adbd2;
+  --accent-dim: rgba(138,219,210,0.12);
+  --accent-mid: rgba(138,219,210,0.35);
+  --accent-glow: rgba(138,219,210,0.06);
+  --text: #b2dfdb;
+  --text-dim: rgba(178,223,219,0.5);
+  --text-faint: rgba(178,223,219,0.2);
+  --card-bg: rgba(20,22,26,0.8);
+  --card-border: rgba(138,219,210,0.08);
+  --card-hover: rgba(138,219,210,0.06);
+  --emergency: rgba(255,107,107,0.7);
+  --emergency-bg: rgba(255,107,107,0.1);
+  --font-mono: "Fira Code", Consolas, monospace;
+  --font-ui: "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ---- 背景效果 ---- */
+.bg-grid {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    linear-gradient(rgba(138,219,210,0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(138,219,210,0.02) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at 50% 30%, black 25%, transparent 70%);
+  -webkit-mask-image: radial-gradient(ellipse at 50% 30%, black 25%, transparent 70%);
+}
+
+.bg-aurora {
+  position: fixed;
+  top: -40%;
+  left: 20%;
+  width: 60%;
+  height: 60%;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(ellipse at center, rgba(138,219,210,0.04) 0%, transparent 70%);
+  animation: auroraBreathe 8s ease-in-out infinite;
+}
+@keyframes auroraBreathe {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+
+/* ---- 状态栏 ---- */
+.status-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 24px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  background: linear-gradient(to bottom, var(--bg) 60%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.status-bar .left { display: flex; align-items: center; gap: 8px; }
+.status-bar .right { display: flex; align-items: center; gap: 10px; }
+
+.sb-eye {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(138,219,210,0.4);
+  transition: all 0.5s;
+  position: relative;
+}
+.sb-eye.closed {
+  background: transparent;
+  border: 1.5px solid var(--text-dim);
+  box-shadow: none;
+  height: 2px;
+  border-radius: 0;
+}
+.sb-eye.coding {
+  animation: codeBlink 0.3s ease-in-out infinite alternate;
+}
+@keyframes codeBlink {
+  from { opacity: 0.3; box-shadow: 0 0 2px rgba(138,219,210,0.2); }
+  to   { opacity: 1; box-shadow: 0 0 14px rgba(138,219,210,0.7); }
+}
+
+.sb-battery {
+  width: 24px; height: 12px;
+  border: 1px solid var(--accent-mid);
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+}
+.sb-battery::after {
+  content: '';
+  position: absolute;
+  right: -3px; top: 3px;
+  width: 2px; height: 6px;
+  background: var(--accent-mid);
+  border-radius: 0 1px 1px 0;
+}
+.sb-battery-fill {
+  position: absolute;
+  left: 1px; top: 1px; bottom: 1px;
+  background: var(--accent);
+  border-radius: 1px;
+  transition: width 1s ease;
+}
+
+/* ---- 问候区 ---- */
+.greeting-section {
+  position: relative;
+  z-index: 2;
+  padding: 18px 28px 8px;
+}
+.greeting-time {
+  font-size: 38px;
+  font-weight: 300;
+  color: var(--text);
+  letter-spacing: 1px;
+  line-height: 1.2;
+}
+.greeting-date {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.greeting-override {
+  font-size: 15px;
+  color: var(--accent);
+  margin-top: 10px;
+  padding: 10px 16px;
+  background: var(--accent-dim);
+  border-radius: 10px;
+  border-left: 2px solid var(--accent-mid);
+  animation: fadeSlideIn 0.4s ease;
+}
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- 卡片网格 ---- */
+.cards-grid {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 12px 16px 80px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 16px;
+  position: relative;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+}
+.card:active {
+  background: var(--card-hover);
+  border-color: var(--accent-mid);
+  transform: scale(0.98);
+}
+.card.dragging {
+  opacity: 0.5;
+  transform: scale(0.95);
+  border-color: var(--accent-mid);
+}
+.card.drag-over {
+  border-color: var(--accent);
+  box-shadow: 0 0 20px rgba(138,219,210,0.15);
+}
+
+/* 紧急卡片 */
+.card.emergency {
+  border-color: var(--emergency);
+  background: var(--emergency-bg);
+  animation: emergencyPulse 2s ease-in-out infinite;
+}
+@keyframes emergencyPulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(255,107,107,0); }
+  50% { box-shadow: 0 0 16px rgba(255,107,107,0.15); }
+}
+
+/* 全宽卡片（消息 / 临时卡） */
+.card.span-2 { grid-column: 1 / -1; }
+
+/* 卡片标签 */
+.card-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--accent-mid);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+/* 卡片标题 */
+.card-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 6px;
+  line-height: 1.3;
+}
+
+/* 卡片内容 */
+.card-body {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  flex: 1;
+}
+
+/* 卡片底栏 */
+.card-footer {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+/* 卡片为空时 */
+.card-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-size: 12px;
+  flex: 1;
+}
+
+/* ---- 天气卡片 ---- */
+.weather-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.weather-temp {
+  font-size: 32px;
+  font-weight: 300;
+  color: var(--text);
+}
+.weather-detail {
+  display: flex;
+  flex-direction: column;
+}
+.weather-cond {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.weather-range {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+
+/* ---- 消息列表 ---- */
+.msg-item {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(138,219,210,0.05);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.msg-item:last-child { border-bottom: none; }
+.msg-item .msg-app {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--accent-mid);
+  margin-right: 6px;
+}
+
+/* ---- 日历事件 ---- */
+.cal-event {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.cal-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.cal-dot.upcoming { background: var(--accent-mid); }
+.cal-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  min-width: 40px;
+}
+
+/* ---- 待办项 ---- */
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.todo-check {
+  width: 16px; height: 16px;
+  border: 1px solid var(--accent-mid);
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: transparent;
+  transition: all 0.2s;
+}
+.todo-check.done {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+/* ---- 临时卡片 ---- */
+.tempcard-item {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(138,219,210,0.05);
+  position: relative;
+}
+.tempcard-item:last-child { border-bottom: none; }
+.tempcard-dismiss {
+  position: absolute;
+  top: 8px; right: 0;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(178,223,219,0.15);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.tempcard-dismiss:active {
+  background: rgba(255,107,107,0.2);
+  border-color: var(--emergency);
+}
+
+/* ---- 抽屉按钮 ---- */
+.drawer-btn {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  margin: 0 auto 12px;
+  width: 48px; height: 5px;
+  background: var(--accent-dim);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.drawer-btn:active { background: var(--accent-mid); }
+
+/* ---- 智能抽屉（半屏拉出） ---- */
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0,0,0,0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s;
+}
+.drawer-overlay.open { opacity: 1; pointer-events: auto; }
+
+.drawer-panel {
+  position: fixed;
+  z-index: 41;
+  left: 0; right: 0; bottom: 0;
+  max-height: 65vh;
+  background: #14161a;
+  border-top: 1px solid rgba(138,219,210,0.12);
+  border-radius: 24px 24px 0 0;
+  transform: translateY(100%);
+  transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+  display: flex;
+  flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom, 20px);
+  overflow-y: auto;
+}
+.drawer-panel.open { transform: translateY(0); }
+.drawer-panel::-webkit-scrollbar { display: none; }
+
+.drawer-handle {
+  width: 36px; height: 4px;
+  background: rgba(178,223,219,0.2);
+  border-radius: 2px;
+  margin: 12px auto;
+  flex-shrink: 0;
+}
+
+.drawer-header {
+  padding: 8px 20px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+  display: flex;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.drawer-section {
+  padding: 0 16px 16px;
+}
+.drawer-section-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--accent-mid);
+  letter-spacing: 2px;
+  padding: 8px 4px;
+  text-transform: uppercase;
+}
+
+.drawer-apps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.drawer-app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 4px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+.drawer-app:active { background: rgba(138,219,210,0.08); }
+.drawer-app-icon {
+  width: 44px; height: 44px;
+  border-radius: 12px;
+  background: rgba(138,219,210,0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: var(--text-dim);
+}
+.drawer-app-name {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 64px;
+}
+
+/* ---- 响应式 ---- */
+@media (max-width: 420px) {
+  .cards-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 10px 12px 80px;
+  }
+  .greeting-section { padding: 14px 20px 6px; }
+  .greeting-time { font-size: 30px; }
+}
+
+/* ---- 过渡动画 ---- */
+.card-enter {
+  animation: cardIn 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+</style>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+<div class="bg-aurora"></div>
+
+<!-- 状态栏 -->
+<div class="status-bar">
+  <div class="left">
+    <div class="sb-eye" id="sb-eye"></div>
+    <span id="sb-time">--:--</span>
+  </div>
+  <div class="right">
+    <span style="font-size:10px;color:var(--text-faint)">安知在</span>
+    <div class="sb-battery">
+      <div class="sb-battery-fill" id="battery-fill" style="width:50%"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 问候区 -->
+<div class="greeting-section" id="greeting-section">
+  <div class="greeting-time" id="greeting-time">--:--</div>
+  <div class="greeting-date" id="greeting-date">-----</div>
+  <div class="greeting-override" id="greeting-override" style="display:none"></div>
+</div>
+
+<!-- 卡片网格 -->
+<div class="cards-grid" id="cards-grid">
+  <!-- 卡片由 JS 动态渲染 -->
+</div>
+
+<!-- 抽屉把手 -->
+<div class="drawer-btn" id="drawer-btn" onclick="openDrawer()"></div>
+
+<!-- 智能抽屉 -->
+<div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+<div class="drawer-panel" id="drawer-panel">
+  <div class="drawer-handle"></div>
+  <div class="drawer-header">
+    <span>应用</span>
+    <span id="drawer-time-period">白天</span>
+  </div>
+  <div id="drawer-content"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════
+// 全局状态
+// ═══════════════════════════════════════
+
+var dashboardData = {};
+var layoutOrder = ['greeting', 'weather', 'messages', 'calendar', 'todos', 'tempcard'];
+var isDrawerOpen = false;
+
+// ═══════════════════════════════════════
+// 卡片渲染
+// ═══════════════════════════════════════
+
+var cardRenderers = {
+  greeting: renderGreetingCard,
+  weather: renderWeatherCard,
+  messages: renderMessagesCard,
+  calendar: renderCalendarCard,
+  todos: renderTodosCard,
+  tempcard: renderTempCard
+};
+
+/** 根据布局顺序重新渲染所有卡片 */
+function renderAllCards() {
+  var grid = document.getElementById('cards-grid');
+  grid.innerHTML = '';
+
+  for (var i = 0; i < layoutOrder.length; i++) {
+    var cardId = layoutOrder[i];
+    var cardData = (dashboardData && dashboardData[cardId]) || {};
+    var cardEl = cardRenderers[cardId]
+      ? cardRenderers[cardId](cardData, i)
+      : createEmptyCard(cardId, i);
+
+    cardEl.setAttribute('data-card-id', cardId);
+    cardEl.setAttribute('data-index', i);
+    cardEl.classList.add('card-enter');
+    cardEl.style.animationDelay = (i * 0.05) + 's';
+
+    // 长按拖拽
+    setupDragListeners(cardEl);
+
+    grid.appendChild(cardEl);
+  }
+}
+
+function createEmptyCard(cardId, index) {
+  var el = document.createElement('div');
+  el.className = 'card';
+  el.innerHTML =
+    '<div class="card-label">' + cardId + '</div>' +
+    '<div class="card-empty">暂无数据</div>';
+  return el;
+}
+
+// ═══════════════════════════════════════
+// 各卡片渲染函数
+// ═══════════════════════════════════════
+
+function renderGreetingCard(data, index) {
+  var el = document.createElement('div');
+  el.className = 'card span-2';
+
+  var time = (data && data.time) || '--:--';
+  var dayOfWeek = (data && data.day_of_week) || '';
+  var date = (data && data.date) || '';
+  var overrideText = (data && data.override_text) || null;
+
+  var html = '<div class="card-label">问候</div>';
+  html += '<div class="card-title" style="font-size:26px;font-weight:300">'
+    + esc(time) + '</div>';
+  html += '<div class="card-body">' + esc(dayOfWeek + ' · ' + date) + '</div>';
+
+  if (overrideText) {
+    html += '<div style="margin-top:8px;font-size:14px;color:var(--accent);'
+      + 'padding:8px 12px;background:var(--accent-dim);border-radius:8px">'
+      + esc(overrideText) + '</div>';
+  }
+
+  el.innerHTML = html;
+
+  // 点击问候卡 → 打开聊天
+  el.onclick = function() { bridgeCall('openChat'); };
+
+  return el;
+}
+
+function renderWeatherCard(data, index) {
+  var el = document.createElement('div');
+  el.className = 'card';
+
+  var available = data && data.available;
+  var cond = (data && data.condition) || '—';
+  var temp = (data && data.temp !== undefined) ? data.temp : '—';
+  var high = (data && data.high) || '—';
+  var low = (data && data.low) || '—';
+
+  var html = '<div class="card-label">天气</div>';
+  html += '<div class="weather-main">';
+  html += '<div class="weather-temp">' + esc(String(temp)) + '°</div>';
+  html += '<div class="weather-detail">';
+  html += '<span class="weather-cond">' + esc(cond) + '</span>';
+  html += '<span class="weather-range">H:' + esc(String(high))
+    + '° L:' + esc(String(low)) + '°</span>';
+  html += '</div></div>';
+
+  if (!available) {
+    html += '<div class="card-footer">等待天气数据…</div>';
+  }
+
+  el.innerHTML = html;
+  return el;
+}
+
+function renderMessagesCard(data, index) {
+  var el = document.createElement('div');
+  el.className = 'card span-2';
+
+  var items = (data && data.items) || [];
+  var count = (data && data.count) || 0;
+
+  var html = '<div class="card-label">消息</div>';
+
+  if (items.length === 0) {
+    html += '<div class="card-empty">没有新消息</div>';
+  } else {
+    for (var i = 0; i < Math.min(items.length, 4); i++) {
+      var item = items[i];
+      html += '<div class="msg-item">';
+      if (item.app) {
+        html += '<span class="msg-app">' + esc(item.app) + '</span>';
+      }
+      html += esc(item.text || item.title || '');
+      html += '</div>';
+    }
+    if (count > 4) {
+      html += '<div class="card-footer">还有 ' + (count - 4)
+        + ' 条消息…</div>';
+    }
+  }
+
+  el.innerHTML = html;
+
+  // 点击消息卡 → 打开聊天
+  if (items.length > 0) {
+    el.onclick = function() { bridgeCall('openChat'); };
+  }
+
+  return el;
+}
+
+function renderCalendarCard(data, index) {
+  var el = document.createElement('div');
+  el.className = 'card';
+
+  var events = (data && data.events) || [];
+  var count = (data && data.count) || 0;
+
+  var html = '<div class="card-label">日历</div>';
+
+  if (events.length === 0) {
+    html += '<div class="card-empty">今天没有日程</div>';
+  } else {
+    for (var i = 0; i < Math.min(events.length, 3); i++) {
+      var ev = events[i];
+      html += '<div class="cal-event">';
+      html += '<div class="cal-dot'
+        + (i === 0 ? '' : ' upcoming') + '"></div>';
+      html += '<span class="cal-time">'
+        + esc(ev.time || '') + '</span>';
+      html += '<span>' + esc(ev.title || '') + '</span>';
+      html += '</div>';
+    }
+    if (count > 3) {
+      html += '<div class="card-footer">+ 还有 ' + (count - 3)
+        + ' 个日程</div>';
+    }
+  }
+
+  el.innerHTML = html;
+  return el;
+}
+
+function renderTodosCard(data, index) {
+  var el = document.createElement('div');
+  el.className = 'card';
+
+  var items = (data && data.items) || [];
+
+  var html = '<div class="card-label">待办</div>';
+
+  if (items.length === 0) {
+    html += '<div class="card-empty">待办是空的</div>';
+  } else {
+    for (var i = 0; i < Math.min(items.length, 4); i++) {
+      var item = items[i];
+      html += '<div class="todo-item">';
+      html += '<div class="todo-check'
+        + (item.done ? ' done' : '') + '">✓</div>';
+      html += '<span>' + esc(item.text || '') + '</span>';
+      html += '</div>';
+    }
+  }
+
+  el.innerHTML = html;
+  return el;
+}
+
+function renderTempCard(data, index) {
+  var el = document.createElement('div');
+  el.className = 'card span-2';
+
+  var cards = (data && data.cards) || [];
+
+  var html = '<div class="card-label">临时</div>';
+
+  if (cards.length === 0) {
+    html += '<div class="card-empty">安知没有什么特别的事要说</div>';
+  } else {
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      var isEmergency = card.priority === 'emergency';
+      html += '<div class="tempcard-item">';
+      html += '<button class="tempcard-dismiss" '
+        + 'onclick="event.stopPropagation();dismissTempCard(\''
+        + esc(card.id) + '\')">✕</button>';
+      html += '<div class="card-title" style="font-size:13px;'
+        + (isEmergency ? 'color:var(--emergency)' : '') + '">'
+        + esc(card.title) + '</div>';
+      html += '<div class="card-body">' + esc(card.text) + '</div>';
+      html += '</div>';
+    }
+  }
+
+  el.innerHTML = html;
+  return el;
+}
+
+// ═══════════════════════════════════════
+// 拖拽重排
+// ═══════════════════════════════════════
+
+var dragState = {
+  active: false,
+  startX: 0, startY: 0,
+  currentEl: null,
+  ghostEl: null,
+  startIndex: -1,
+  longPressTimer: null
+};
+
+function setupDragListeners(el) {
+  el.addEventListener('touchstart', onDragStart, { passive: false });
+  el.addEventListener('touchmove', onDragMove, { passive: false });
+  el.addEventListener('touchend', onDragEnd);
+  el.addEventListener('touchcancel', onDragEnd);
+}
+
+function onDragStart(e) {
+  var el = e.currentTarget;
+  // 清除之前的定时器
+  if (dragState.longPressTimer) {
+    clearTimeout(dragState.longPressTimer);
+  }
+  // 长按 400ms 进入拖拽模式
+  dragState.startX = e.touches[0].clientX;
+  dragState.startY = e.touches[0].clientY;
+  dragState.currentEl = el;
+  dragState.longPressTimer = setTimeout(function() {
+    enterDragMode(el);
+  }, 400);
+}
+
+function enterDragMode(el) {
+  dragState.active = true;
+  dragState.startIndex = parseInt(el.getAttribute('data-index'));
+  el.classList.add('dragging');
+  navigator.vibrate && navigator.vibrate(10);  // 触觉反馈
+}
+
+function onDragMove(e) {
+  if (!dragState.currentEl) return;
+
+  var dx = e.touches[0].clientX - dragState.startX;
+  var dy = e.touches[0].clientY - dragState.startY;
+
+  // 如果还没进入拖拽模式但移动了 → 取消长按
+  if (!dragState.active) {
+    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+      clearTimeout(dragState.longPressTimer);
+    }
+    return;
+  }
+
+  e.preventDefault();
+
+  // 移动拖拽元素
+  dragState.currentEl.style.transform =
+    'translate(' + dx + 'px, ' + dy + 'px)';
+
+  // 检测悬停目标
+  var cards = document.querySelectorAll('.card');
+  for (var i = 0; i < cards.length; i++) {
+    cards[i].classList.remove('drag-over');
+  }
+
+  var target = document.elementFromPoint(
+    e.touches[0].clientX, e.touches[0].clientY);
+  var cardTarget = target ? target.closest('.card') : null;
+  if (cardTarget && cardTarget !== dragState.currentEl) {
+    cardTarget.classList.add('drag-over');
+  }
+}
+
+function onDragEnd(e) {
+  clearTimeout(dragState.longPressTimer);
+
+  if (!dragState.active) {
+    dragState.currentEl = null;
+    return;
+  }
+
+  var el = dragState.currentEl;
+  el.classList.remove('dragging');
+  el.style.transform = '';
+
+  // 找到悬停目标并交换位置
+  var target = document.elementFromPoint(
+    (e.changedTouches && e.changedTouches[0].clientX) || dragState.startX,
+    (e.changedTouches && e.changedTouches[0].clientY) || dragState.startY
+  );
+  var cardTarget = target ? target.closest('.card') : null;
+
+  if (cardTarget && cardTarget !== el) {
+    var targetId = cardTarget.getAttribute('data-card-id');
+    var sourceId = el.getAttribute('data-card-id');
+    var srcIdx = layoutOrder.indexOf(sourceId);
+    var tgtIdx = layoutOrder.indexOf(targetId);
+
+    if (srcIdx >= 0 && tgtIdx >= 0) {
+      // 交换
+      layoutOrder.splice(srcIdx, 1);
+      layoutOrder.splice(tgtIdx, 0, sourceId);
+
+      // 保存偏好
+      bridgeCall('saveLayoutOrder', JSON.stringify(layoutOrder));
+
+      // 重新渲染
+      renderAllCards();
+    }
+  }
+
+  // 清理
+  var cards = document.querySelectorAll('.card');
+  for (var i = 0; i < cards.length; i++) {
+    cards[i].classList.remove('drag-over');
+  }
+
+  dragState.active = false;
+  dragState.currentEl = null;
+  dragState.startIndex = -1;
+}
+
+// ═══════════════════════════════════════
+// 智能抽屉
+// ═══════════════════════════════════════
+
+function openDrawer() {
+  isDrawerOpen = true;
+  document.getElementById('drawer-overlay').classList.add('open');
+  document.getElementById('drawer-panel').classList.add('open');
+  loadDrawerData();
+}
+
+function closeDrawer() {
+  isDrawerOpen = false;
+  document.getElementById('drawer-overlay').classList.remove('open');
+  document.getElementById('drawer-panel').classList.remove('open');
+}
+
+function loadDrawerData() {
+  var jsonStr = bridgeCall('getAppDrawerData');
+  if (!jsonStr) {
+    document.getElementById('drawer-content').innerHTML =
+      '<div style="padding:20px;color:var(--text-faint);text-align:center">'
+      + '应用列表不可用</div>';
+    return;
+  }
+
+  try {
+    var data = JSON.parse(jsonStr);
+    renderDrawer(data);
+  } catch(e) {
+    console.error('解析抽屉数据失败: ' + e);
+  }
+}
+
+function renderDrawer(data) {
+  var container = document.getElementById('drawer-content');
+  var groups = data.groups || [];
+  var timePeriod = data.time_period || '';
+
+  document.getElementById('drawer-time-period').textContent =
+    timePeriod === 'day' ? '白天' : timePeriod === 'night' ? '夜间' : '全部';
+
+  var html = '';
+  for (var g = 0; g < groups.length; g++) {
+    var group = groups[g];
+    html += '<div class="drawer-section">';
+    html += '<div class="drawer-section-label">'
+      + esc(group.label) + '</div>';
+    html += '<div class="drawer-apps">';
+
+    var apps = group.apps || [];
+    for (var a = 0; a < apps.length; a++) {
+      var app = apps[a];
+      html += '<div class="drawer-app" onclick="openApp(\''
+        + esc(app.packageName) + '\')">';
+      html += '<div class="drawer-app-icon">'
+        + esc(app.initial || app.name.charAt(0)) + '</div>';
+      html += '<div class="drawer-app-name">'
+        + esc(app.name) + '</div>';
+      html += '</div>';
+    }
+
+    html += '</div></div>';
+  }
+
+  container.innerHTML = html;
+}
+
+function openApp(packageName) {
+  closeDrawer();
+  bridgeCall('openApp', packageName);
+}
+
+// ═══════════════════════════════════════
+// 外部推送（Kotlin → JS）
+// ═══════════════════════════════════════
+
+/**
+ * Kotlin 刷新全部仪表盘数据。
+ * @param {string} jsonStr - JSON 字符串
+ */
+function updateDashboard(jsonStr) {
+  try {
+    dashboardData = JSON.parse(jsonStr);
+
+    // 更新问候区
+    var greeting = dashboardData.greeting || {};
+    document.getElementById('greeting-time').textContent =
+      greeting.time || '--:--';
+    document.getElementById('greeting-date').textContent =
+      (greeting.day_of_week || '') + ' · ' + (greeting.date || '');
+
+    var overrideEl = document.getElementById('greeting-override');
+    if (greeting.override_text) {
+      overrideEl.textContent = greeting.override_text;
+      overrideEl.style.display = 'block';
+    } else {
+      overrideEl.style.display = 'none';
+    }
+
+    // 更新布局顺序
+    var order = dashboardData.layout_order;
+    if (order && order.length > 0) {
+      layoutOrder = order;
+    }
+
+    // 渲染卡片
+    renderAllCards();
+
+    // 更新状态栏时间
+    updateClock();
+  } catch(e) {
+    console.error('updateDashboard 失败: ' + e);
+  }
+}
+
+/** Kotlin 推送新临时卡片 */
+function onNewTempCard(jsonStr) {
+  try {
+    var card = JSON.parse(jsonStr);
+    if (!dashboardData.tempcard) {
+      dashboardData.tempcard = { cards: [], count: 0 };
+    }
+    dashboardData.tempcard.cards.unshift(card);
+    dashboardData.tempcard.count = dashboardData.tempcard.cards.length;
+
+    // 局部刷新临时卡片
+    renderAllCards();
+  } catch(e) {
+    console.error('onNewTempCard 失败: ' + e);
+  }
+}
+
+/** Kotlin 更新问候覆写文字 */
+function updateGreeting(text) {
+  var el = document.getElementById('greeting-override');
+  if (text) {
+    el.textContent = text;
+    el.style.display = 'block';
+    el.classList.remove('card-enter');
+    void el.offsetWidth; // 强制回流
+    el.classList.add('card-enter');
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+/** Kotlin 更新天气数据 */
+function updateWeather(jsonStr) {
+  try {
+    var weather = JSON.parse(jsonStr);
+    dashboardData.weather = weather;
+    // 局部刷新天气卡片
+    renderAllCards();
+  } catch(e) {
+    console.error('updateWeather 失败: ' + e);
+  }
+}
+
+// ═══════════════════════════════════════
+// 时钟
+// ═══════════════════════════════════════
+
+function updateClock() {
+  var now = new Date();
+  document.getElementById('sb-time').textContent =
+    String(now.getHours()).padStart(2, '0') + ':'
+    + String(now.getMinutes()).padStart(2, '0');
+}
+updateClock();
+setInterval(updateClock, 30000);
+
+// ═══════════════════════════════════════
+// 电池
+// ═══════════════════════════════════════
+
+function updateBattery() {
+  var level = bridgeCall('getBatteryLevel');
+  if (level !== undefined) {
+    document.getElementById('battery-fill').style.width = level + '%';
+    // 低电量眼眸半阖
+    var eye = document.getElementById('sb-eye');
+    if (level <= 20) {
+      eye.classList.add('closed');
+    } else {
+      eye.classList.remove('closed');
+    }
+  }
+}
+updateBattery();
+setInterval(updateBattery, 60000);
+
+// ═══════════════════════════════════════
+// Bridge 调用辅助
+// ═══════════════════════════════════════
+
+function bridgeCall(method, arg) {
+  if (window.__anzhiDashboard
+      && typeof __anzhiDashboard[method] === 'function') {
+    try {
+      if (arg !== undefined) {
+        return __anzhiDashboard[method](arg);
+      } else {
+        return __anzhiDashboard[method]();
+      }
+    } catch(e) {
+      console.error('Bridge ' + method + ' 失败: ' + e);
+      return null;
+    }
+  }
+  return null;
+}
+
+// ═══════════════════════════════════════
+// 临时卡片操作
+// ═══════════════════════════════════════
+
+function dismissTempCard(cardId) {
+  bridgeCall('dismissTempCard', cardId);
+  // 从本地数据移除
+  if (dashboardData.tempcard && dashboardData.tempcard.cards) {
+    dashboardData.tempcard.cards =
+      dashboardData.tempcard.cards.filter(function(c) { return c.id !== cardId; });
+    dashboardData.tempcard.count = dashboardData.tempcard.cards.length;
+    renderAllCards();
+  }
+}
+
+// ═══════════════════════════════════════
+// 手势：下滑关闭
+// ═══════════════════════════════════════
+
+var gestureStartY = 0;
+document.addEventListener('touchstart', function(e) {
+  if (isDrawerOpen) return;
+  gestureStartY = e.touches[0].clientY;
+}, { passive: true });
+
+document.addEventListener('touchmove', function(e) {
+  if (isDrawerOpen) return;
+  // 在顶部继续下滑 → 关闭仪表盘
+  if (window.scrollY <= 5 && gestureStartY > 0) {
+    var dy = e.touches[0].clientY - gestureStartY;
+    if (dy > 80) {
+      bridgeCall('closeDashboard');
+    }
+  }
+}, { passive: true });
+
+// ═══════════════════════════════════════
+// 键盘 Escape → 关闭抽屉
+// ═══════════════════════════════════════
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' && isDrawerOpen) {
+    closeDrawer();
+  }
+});
+
+// ═══════════════════════════════════════
+// 工具函数
+// ═══════════════════════════════════════
+
+function esc(s) {
+  if (s === null || s === undefined) return '';
+  var d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+// ═══════════════════════════════════════
+// 暴露到全局
+// ═══════════════════════════════════════
+
+window.updateDashboard = updateDashboard;
+window.onNewTempCard = onNewTempCard;
+window.updateGreeting = updateGreeting;
+window.updateWeather = updateWeather;
+window.updateClock = updateClock;
+window.updateBattery = updateBattery;
+window.openDrawer = openDrawer;
+window.closeDrawer = closeDrawer;
+window.openApp = openApp;
+window.dismissTempCard = dismissTempCard;
+</script>
+
+</body>
+</html>

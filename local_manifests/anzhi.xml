@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  =============================================================================
+  Anzhi's Phone — local_manifests / AOSP 构建配方（Step 14 完整版）
+  =============================================================================
+
+  目标设备：Pixel 6a (bluejay)
+  Android 版本：15 (LineageOS 22.1, android-15.0.0_r1)
+  SELinux：Enforcing（Step 14 收紧）
+  构建类型：userdebug
+
+  =============================================================================
+  使用方法（BUILD.md §六）：
+    1. repo init -u https://mirrors.tuna.tsinghua.edu.cn/git/LineageOS/android.git -b lineage-22.1
+    2. 把本文件复制到 .repo/local_manifests/anzhi.xml
+    3. repo sync -j4
+    4. 手动复制安知源码到 AOSP 树（见下方"手动部署"注释）
+    5. source build/envsetup.sh && breakfast bluejay
+    6. mka bacon -j4
+
+  ⚠️ 标注说明：
+    [LOCAL]  = 无需 git repo，从 <project-root>\ 手动复制到 AOSP 树
+    [GITHUB] = 需要在 github.com/anzhi-os 创建对应 repo 后取消注释
+    [TODO]   = 待创建/待决定
+  =============================================================================
+-->
+
+<manifest>
+
+  <!-- ────────────────────────────────────────────────────────────────
+       Remote 定义
+       ──────────────────────────────────────────────────────────────── -->
+
+  <!-- 安知手机 官方 GitHub org（待创建 repo 后启用） -->
+  <remote name="anzhi"
+          fetch="https://github.com/anzhi-os"
+          revision="main" />
+
+  <!-- LineageOS 官方（已在 default.xml 中定义，此处备用） -->
+  <!-- <remote name="lineage" fetch="https://github.com/LineageOS" /> -->
+
+
+  <!-- ────────────────────────────────────────────────────────────────
+       一、核心 App：安知手机 系统服务（priv-app）
+       ────────────────────────────────────────────────────────────────
+
+       路径：packages/apps/AnzhiOS/
+       内容：<project-root>\app\ 下全部源码
+             含 AnzhiManagerService、AnzhiSocket、AnzhiSessionStore、
+             AnzhiAuditLog、PathCache、ActionTransactionLock、
+             AnzhiAccessibility、AnzhiNotificationAssistant、
+             AnzhiWakeManager、AnzhiDiaryManager、
+             AnzhiLockScreenBridge、AnzhiDrawerProvider、
+             action/、backend/、input/、display/、cdp/、llm/、chat/、dashboard/
+       签名：platform key（Android.bp 中声明 certificate: "platform"）
+
+       [LOCAL] 手动部署：把 <project-root>\app\ 目录完整复制到 AOSP 树：
+         cp -r "<project-root>\app\*" packages/apps/AnzhiOS/
+
+       [GITHUB] 待创建 repo：platform_packages_apps_AnzhiOS
+         → 取消注释下面这行且移除 [LOCAL] 手动复制步骤：
+  -->
+  <!--
+  <project path="packages/apps/AnzhiOS"
+           name="platform_packages_apps_AnzhiOS"
+           remote="anzhi"
+           revision="main" />
+  -->
+
+
+  <!-- ────────────────────────────────────────────────────────────────
+       二、Launcher / Dashboard 界面
+       ────────────────────────────────────────────────────────────────
+
+       路径：packages/apps/AnzhiLauncher/
+       内容：仪表盘、锁屏文字覆盖层、智能抽屉（Step 12）
+       签名：platform key
+
+       [TODO] Launcher 界面目前集成在 AnzhiOS 主 App 中
+              （AnzhiDashboardActivity + AnzhiLockScreenBridge +
+               AnzhiDrawerProvider）。
+              如需独立为单独 APK，创建此 repo 并拆分代码。
+  -->
+  <!--
+  <project path="packages/apps/AnzhiLauncher"
+           name="platform_packages_apps_AnzhiLauncher"
+           remote="anzhi"
+           revision="main" />
+  -->
+
+
+  <!-- ────────────────────────────────────────────────────────────────
+       三、SELinux 策略（Step 2 地基 + Step 14 收紧）
+       ────────────────────────────────────────────────────────────────
+
+       [LOCAL] 手动部署（推荐）：
+         1. 复制 <project-root>\sepolicy\anzhi_service.te
+            → system/sepolicy/private/anzhi_service.te
+         2. 在 system/sepolicy/private/service_contexts 末尾添加：
+            anzhi  u:object_r:anzhi_service:s0
+         3. 在 device/google/bluejay/BoardConfig.mk 中添加：
+            BOARD_SEPOLICY_DIRS += device/google/bluejay/sepolicy
+         4. 在 device/google/bluejay/sepolicy/file_contexts 中添加：
+            /system_ext/priv-app/AnzhiOS(/.*)?  u:object_r:anzhi_system_file:s0
+            /data/data/com\.anzhi\.os(/.*)?     u:object_r:anzhi_data_file:s0
+            /data/local/tmp/anzhi_.*            u:object_r:anzhi_debug_file:s0
+
+       [GITHUB] 待创建 repo：anzhi_system_sepolicy（fork system/sepolicy + 添加 anzhi 规则）
+         → 取消注释下面几行：
+  -->
+  <!--
+  <remove-project name="platform/system/sepolicy" />
+  <project path="system/sepolicy"
+           name="anzhi_system_sepolicy"
+           remote="anzhi"
+           revision="anzhi-v15" />
+  -->
+
+
+  <!-- ────────────────────────────────────────────────────────────────
+       四、frameworks/base（如需修改 SystemUI/KeyguardIndicationController）
+       ────────────────────────────────────────────────────────────────
+
+       需求来源：
+       - Step 12: 锁屏文字通过 KeyguardIndicationController 公开 API 注入
+         （setPersistentUnlockMessage / showTransientIndication /
+          computePowerIndication）。这些已是 public API，无需 fork。
+       - 状态栏"安知视线"眼睛图标 → 需要修改 SystemUI（Step 15/16）
+       - 关机/重启画面定制 → 需要修改 frameworks/base
+
+       [TODO] V1 阶段使用公开 API，暂不 fork。
+             V2 如需定制 SystemUI（状态栏眼睛图标/电池眼眸/小树苗信号），
+             取消注释下面几行并创建 fork。
+  -->
+  <!--
+  <remove-project name="platform/frameworks/base" />
+  <project path="frameworks/base"
+           name="platform_frameworks_base"
+           remote="anzhi"
+           revision="anzhi-v15" />
+  -->
+
+
+  <!-- ────────────────────────────────────────────────────────────────
+       五、build/make（构建配方：PRODUCT_PACKAGES + PRODUCT_COPY_FILES）
+       ────────────────────────────────────────────────────────────────
+
+       需要在 device/google/bluejay/device.mk 或
+       vendor/extra/product.mk 中添加：
+
+         # AnzhiOS 系统服务（priv-app，平台签名）
+         PRODUCT_PACKAGES += AnzhiOS
+
+         # SELinux 策略
+         PRODUCT_COPY_FILES += \
+             vendor/anzhi/sepolicy/anzhi_service.te:$(TARGET_COPY_OUT_SYSTEM)/etc/selinux/anzhi_service.te
+
+         # Default Permissions（Notification Assistant 开机自启白名单）
+         PRODUCT_COPY_FILES += \
+             vendor/anzhi/default-permissions/anzhi_assistant_grant.xml:$(TARGET_COPY_OUT_SYSTEM)/etc/default-permissions/anzhi_assistant_grant.xml
+
+         # 安知系统属性
+         PRODUCT_PROPERTY_OVERRIDES += \
+             persist.anzhi.os.version=1.0.0 \
+             persist.anzhi.os.vps_url=wss://your-vps:8080/anzhi
+
+       [LOCAL] 手动部署：把上述 PRODUCT_PACKAGES 和 PRODUCT_COPY_FILES
+              加到 device/google/bluejay/device.mk 中。
+
+       [GITHUB] 待创建 repo：anzhi_platform_build
+         → 取消注释下面几行：
+  -->
+  <!--
+  <remove-project name="platform/build" />
+  <project path="build/make"
+           name="anzhi_platform_build"
+           remote="anzhi"
+           revision="anzhi" />
+  -->
+
+
+  <!-- ────────────────────────────────────────────────────────────────
+       六、device/google/bluejay（Pixel 6a 设备配置）
+       ────────────────────────────────────────────────────────────────
+
+       定制内容：
+       - BoardConfig.mk：SELinux Enforcing、BOARD_SEPOLICY_DIRS
+       - device.mk：PRODUCT_PACKAGES += AnzhiOS、PRODUCT_COPY_FILES
+       - overlay/frameworks/base/core/res/res/values/config.xml：
+         - Doze 白名单预埋（陷阱 13）
+         - config_defaultEnabledNotificationAssistants 包含 com.anzhi.os
+       - sepolicy/file_contexts：anzhi 相关文件标签
+
+       [LOCAL] 手动部署：直接修改 AOSP 树中 device/google/bluejay/ 的文件。
+
+       [GITHUB] 待创建 repo：anzhi_device_google_bluejay
+         → 取消注释：
+  -->
+  <!--
+  <project path="device/google/bluejay"
+           name="anzhi_device_google_bluejay"
+           remote="anzhi"
+           revision="anzhi" />
+  -->
+
+
+  <!-- ────────────────────────────────────────────────────────────────
+       七、vendor/anzhi（安知专属 vendor 文件）
+       ────────────────────────────────────────────────────────────────
+
+       目录结构（放在 AOSP 树 vendor/anzhi/ 下）：
+         vendor/anzhi/
+         ├── sepolicy/
+         │   └── anzhi_service.te          ← 从 <project-root>\sepolicy\ 复制
+         ├── default-permissions/
+         │   └── anzhi_assistant_grant.xml ← 从 <project-root>\default-permissions\ 复制
+         └── Android.mk                    ← 见下方
+
+       注意：default-permissions XML 需要打入 /system/etc/default-permissions/
+       而不是 /vendor/etc/default-permissions/，因为 priv-app 放在 system_ext。
+
+       [TODO] 创建此 vendor repo 或不依赖 git —— 从 <project-root>\ 手动复制到 AOSP 树即可。
+  -->
+
+
+  <!-- ────────────────────────────────────────────────────────────────
+       八、vendor/google/bluejay（TheMuppets 提取的闭源二进制）
+       已在 Step 1 编译环境搭建时配置。不需要放在这里。
+  -->
+
+
+  <!-- ────────────────────────────────────────────────────────────────
+       九、预编译 APK / JAR 依赖（如有）
+       ────────────────────────────────────────────────────────────────
+
+       安知手机 依赖（已在 app/ 目录中通过 Gradle 管理）：
+       - OkHttp（WebSocket + API HTTP）
+       - org.json（JSON 解析，Android SDK 自带）
+       - AndroidX（可选）
+       - SQLite（Android SDK 自带）
+
+       所有依赖在 AOSP 编译时通过 Android.bp 声明。
+       AnzhiOS 的 Android.bp 文件放在 packages/apps/AnzhiOS/Android.bp。
+  -->
+
+</manifest>

@@ -1,0 +1,107 @@
+/*
+ * =============================================================================
+ * Anzhi's Phone — AOSP 构建配方（Android.bp）
+ * =============================================================================
+ *
+ * 安装路径：packages/apps/AnzhiOS/Android.bp
+ * 签名方式：platform key（系统签名）
+ * 部署位置：/system_ext/priv-app/AnzhiOS/AnzhiOS.apk
+ *
+ * 编译命令：
+ *   source build/envsetup.sh
+ *   breakfast bluejay
+ *   mka AnzhiOS         # 仅编译安知
+ *   mka bacon           # 全编译 ROM
+ *
+ * =============================================================================
+ */
+
+android_app {
+    name: "AnzhiOS",
+
+    // 平台签名 → 可以持有 signature|privileged 权限
+    certificate: "platform",
+
+    // priv-app → 系统级权限（INJECT_EVENTS / BIND_NOTIFICATION_ASSISTANT 等）
+    privileged: true,
+
+    // platform_apis → 允许访问 @hide API（如 SystemProperties）
+    // ⚠️ 不能设 sdk_version —— Soong 禁止 platform_apis 与非空 sdk_version 共存
+    platform_apis: true,
+
+    // 安装到 system_ext（Product 分区，区别于 vendor 和 system）
+    // LineageOS 22.1 默认：system_ext/priv-app/
+    // 若设备 product 分区满了，改 system/priv-app/
+    system_ext_specific: true,
+
+    // ── AndroidManifest 路径（AS 风格 src/main/）──
+    manifest: "src/main/AndroidManifest.xml",
+
+    // ── 源码路径 ──
+    srcs: [
+        "src/main/java/com/anzhi/os/**/*.kt",
+        "src/main/java/com/anzhi/os/**/*.java",
+        "src/main/aidl/**/*.aidl",
+    ],
+
+    // ── 资源 & Assets ──
+    resource_dirs: ["src/main/res"],
+    asset_dirs: ["src/main/assets"],
+
+    // ── AIDL 接口 ──
+    aidl: {
+        include_dirs: [
+            "packages/apps/AnzhiOS/src/main/aidl",
+            "vendor/anzhi/anzhicore/aidl",    // IAnzhiCoreService
+        ],
+    },
+
+    // ── 静态库依赖 ──
+    static_libs: [
+        "anzhi-okhttp",         // OkHttp 4.12.0 (okhttp3.* 包名)
+        "okio-lib",
+        "kotlinx_coroutines_android",   // Dispatchers.Main 等 android 专属
+        // ⚠️ 不用 kotlinx_coroutines（core）：它 host_supported 且无自身 srcs，platform_apis 下
+        // 被 Soong 解析成 host 变体，而 host jar 在 android-only 构建里不生成 → classpath 死链
+        // → MutableStateFlow/StateFlow 全 unresolved。改用 kotlinx_coroutines-device
+        //（java_host_for_device，专为把 host 库暴露给 android 消费者设计，android 构建生成 device 产物）
+        "kotlinx_coroutines-device",    // StateFlow / MutableStateFlow / update（core 实现）
+        // Jetpack Compose
+        "androidx.compose.runtime_runtime",
+        "androidx.compose.foundation_foundation",
+        "androidx.compose.ui_ui",
+        "androidx.compose.material3_material3",
+        "androidx.compose.ui_ui-tooling-preview",
+        "androidx.activity_activity-compose",
+        "androidx.lifecycle_lifecycle-viewmodel-compose",
+    ],
+
+    // ── Kotlin 支持（版本由 Soong 全局管理） ──
+    // Kotlin 2.0+ 默认使用 K2 编译器，不再需要 -Xuse-k2
+
+    // ── 平台库（不需要打包进 APK，系统自带） ──
+    libs: [
+        "androidx.annotation_annotation",
+    ],
+
+    // ── SDK 版本 ──
+    // platform_apis: true 已提供完整平台 API。不能设 sdk_version（Soong 禁止共存）
+
+    // ── ProGuard / R8 ──
+    optimize: {
+        enabled: false,     // 首次编译暂不启用。等 ROM 验证稳定后改为 true
+        proguard_flags_files: ["proguard-rules.pro"],
+    },
+
+    // ── Overlay（资源覆盖） ──
+    // 覆盖 frameworks/base/core/res/res/values/config.xml 中的部分值
+    // 如 config_defaultEnabledNotificationAssistants
+    // 如 deviceidle.xml 白名单（Doze 豁免）
+
+    // ── JNI（如果有）──
+    // jni_libs: ["libanzhi_jni"],
+
+    // ── 权限文件 ──
+    // AndroidManifest.xml 已在 src/main/ 中
+    // accessibility_config.xml 已在 src/main/res/xml/ 中
+}

@@ -1,0 +1,36 @@
+# =============================================================================
+# Anzhi's Phone — SELinux file_contexts
+# =============================================================================
+#
+# 安装路径：device/google/bluejay/sepolicy/file_contexts
+# （或 vendor/anzhi/sepolicy/file_contexts + BOARD_SEPOLICY_DIRS）
+#
+# 用途：为安知手机 的文件和目录打上 SELinux 标签。
+#       标签在 anzhi_service.te 中定义为 type。
+# =============================================================================
+
+# ── APK 系统文件 ──
+/system_ext/priv-app/AnzhiOS(/.*)?                          u:object_r:anzhi_system_file:s0
+
+# ── 数据目录 ──
+/data/data/com\.anzhi\.os(/.*)?                             u:object_r:anzhi_data_file:s0
+/data/user/.*/com\.anzhi\.os(/.*)?                          u:object_r:anzhi_data_file:s0
+/data/user_de/.*/com\.anzhi\.os(/.*)?                       u:object_r:anzhi_data_file:s0
+
+# ── 调试文件（crash 日志 / boot 计数器 / DB 备份） ──
+/data/local/tmp/anzhi_.*                                    u:object_r:anzhi_debug_file:s0
+
+# ── WebView 沙盒进程数据 ──
+/data/data/com\.anzhi\.os:webview(/.*)?                     u:object_r:anzhi_data_file:s0
+
+# ── SQLite WAL 和 SHM 文件 ──
+/data/data/com\.anzhi\.os/.*\.db-wal                       u:object_r:anzhi_data_file:s0
+/data/data/com\.anzhi\.os/.*\.db-shm                       u:object_r:anzhi_data_file:s0
+
+# ── 缓存目录 ──
+/data/data/com\.anzhi\.os/cache(/.*)?                       u:object_r:anzhi_data_file:s0
+/data/data/com\.anzhi\.os/code_cache(/.*)?                  u:object_r:anzhi_data_file:s0
+
+# ── SD 卡截图 ──
+/sdcard/anzhi_.*                                            u:object_r:sdcardfs:s0
+/sdcard/Pictures/Anzhi(/.*)?                                u:object_r:sdcardfs:s0

@@ -1,0 +1,68 @@
+{
+  "_description": "Gemini 官网 DOM 选择器集中管理。Google 前端 A/B Test 改 DOM → 只需更新此文件，不动 Kotlin。",
+  "_version": 1,
+
+  "gemini.google.com": {
+    "inputArea": {
+      "selector": "div.ql-editor, [contenteditable=\"true\"], rich-textarea div[contenteditable]",
+      "fallback": "[data-placeholder], textarea, [role=\"textbox\"]",
+      "description": "Gemini 输入框。Google 经常改 class name，用 contenteditable 兜底。"
+    },
+    "sendButton": {
+      "selector": "button[aria-label=\"Send message\"], button.send-button, button[data-test-id=\"send-button\"]",
+      "fallback": "button:has(svg), [role=\"button\"][aria-label*=\"send\" i]",
+      "description": "发送按钮。优先 aria-label，兜底 has(svg)（Gemini 的发送图标是 SVG）。"
+    },
+    "responseArea": {
+      "selector": ".response-content, .model-response, [data-message-author=\"bot\"]",
+      "fallback": "model-response, .message:last-child .markdown",
+      "description": "安知回复区域。用于检测回复是否到达。"
+    },
+    "lastResponseText": {
+      "selector": ".response-content:last-child .markdown, model-response:last-child, [data-message-author=\"bot\"]:last-child",
+      "fallback": ".message:last-child .message-content",
+      "description": "最后一条安知回复的文本内容。"
+    },
+    "newChatButton": {
+      "selector": "button[aria-label=\"New chat\"], .new-chat-button, [data-test-id=\"new-chat\"]",
+      "fallback": "a[href=\"/app\"]",
+      "description": "新建对话按钮。Cookie 过期/对话消失时自动 window.open 新建。"
+    },
+    "pageTitle": {
+      "selector": "title",
+      "fallback": "document.title",
+      "description": "页面标题。用于检测 CAPTCHA / Sign in 状态。"
+    },
+    "conversationList": {
+      "selector": ".conversation-item, [data-conversation-id], .chat-history-item",
+      "fallback": "nav a[href*=\"/app/\"]",
+      "description": "对话列表项。检测对话是否还存在/可访问。"
+    }
+  },
+
+  "accounts.google.com": {
+    "signInForm": {
+      "selector": "form[action*=\"signin\"], #identifierId, input[type=\"email\"]",
+      "fallback": "input[name=\"identifier\"]",
+      "description": "Google 登录表单。检测到说明需要 Cami 重新登录。"
+    }
+  },
+
+  "captcha_patterns": {
+    "_description": "页面标题/URL 模式匹配——检测 CAPTCHA / Cloudflare 验证。",
+    "title_patterns": [
+      "Just a moment...",
+      "CAPTCHA",
+      "are you a human",
+      "Verify you are human",
+      "Checking your browser",
+      "One more step",
+      "Please verify"
+    ],
+    "url_patterns": [
+      "challenges.cloudflare.com",
+      "google.com/sorry",
+      "recaptcha"
+    ]
+  }
+}

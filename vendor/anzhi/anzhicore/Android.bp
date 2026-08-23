@@ -1,0 +1,11 @@
+android_app {
+    name: "AnzhiCore",
+    srcs: [
+        "src/**/*.java",
+        "aidl/**/*.aidl",
+    ],
+    manifest: "AndroidManifest.xml",
+    privileged: true,
+    platform_apis: true,
+    certificate: "platform",
+}

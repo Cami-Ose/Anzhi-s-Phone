@@ -1,0 +1,2 @@
+# AnzhiCoreService 系统服务
+anzhi_core    u:object_r:anzhi_core_service:s0

@@ -1,0 +1,2 @@
+# AnzhiCoreService 独立进程 → anzhi_core_app SELinux 域
+user=system seinfo=platform name=com.anzhi.core domain=anzhi_core_app type=anzhi_data_file

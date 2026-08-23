@@ -1,0 +1,414 @@
+# =============================================================================
+# Anzhi's Phone 系统服务 SELinux 策略 — 完整版（Step 14）
+# =============================================================================
+#
+# 基于 AAOSP sepolicy/llm_service.te 设计，适配安知架构：
+#   - 不加载本地模型文件（安知走 API 直调 + WebSocket → VPS）
+#   - 需要 injectInputEvent 注入触摸/按键事件
+#   - 需要创建 VirtualDisplay + 截图
+#   - 需要网络权限（WebSocket + DeepSeek/Gemini API 直调）
+#   - 需要读 UI 树（AccessibilityService）
+#   - 需要接管通知（NotificationAssistantService）
+#   - 需要 AlarmManager 定时唤醒 + 日记定时
+#   - 需要 shell 命令执行（screencap / CC agent loop）
+#
+# 覆盖模块（Step 1-13）：
+#   Step 2:  WebSocket + SELinux 地基
+#   Step 3:  CDP WebView 独立进程
+#   Step 4:  DeepSeek + Gemini API 客户端
+#   Step 5:  CC 双模型 agent loop（DeepSeek + Gemini 3.5 Flash）
+#   Step 6:  Chat 界面
+#   Step 7:  路径缓存 + ActionTransactionLock
+#   Step 8:  AccessibilityService + UI 树 + CoordinateMapper
+#   Step 9:  操作执行层（action/input/backend/display + ThermalGuard）
+#   Step 10: 通知管理（Notification Assistant）
+#   Step 11: 唤醒自触发（AlarmManager + BOOT_COMPLETED 恢复）
+#   Step 12: 仪表盘 + 锁屏 + 智能抽屉
+#   Step 13: 日记功能（CDP + Keep + AccessibilityService 读日记）
+#
+# 安装路径：
+#   system/sepolicy/private/anzhi_service.te
+#   system/sepolicy/prebuilts/api/202404/private/anzhi_service.te
+#
+# 服务注册（system/sepolicy/private/service_contexts 添加）：
+#   anzhi  u:object_r:anzhi_service:s0
+#
+# =============================================================================
+
+# ------------------------------------------------------------------
+# Type 声明
+# ------------------------------------------------------------------
+
+# 服务类型 —— Binder 服务 "anzhi" 的 SELinux 标签
+type anzhi_service, system_api_service, system_server_service, service_manager_type;
+
+# 安知应用域 —— 平台签名的系统应用（priv-app）
+type anzhi_app, appdomain;
+app_domain(anzhi_app)
+
+# 安知 WebView 沙盒进程 —— :webview 独立进程
+type anzhi_webview, appdomain;
+app_domain(anzhi_webview)
+
+# 安知数据文件 —— /data/data/com.anzhi.os/ 下的数据库、缓存
+type anzhi_data_file, file_type, data_file_type;
+
+# 安知系统文件 —— /system_ext/priv-app/AnzhiOS/ 下的 APK
+type anzhi_system_file, file_type, system_file_type;
+
+# 安知调试文件 —— /data/local/tmp/ 下的 crash 日志、boot 计数器
+type anzhi_debug_file, file_type;
+
+# 安知系统属性 —— persist.anzhi.* 的 SELinux 标签
+type anzhi_prop, property_type;
+set_prop(anzhi_app, anzhi_prop)
+
+# =============================================================================
+# 一、网络权限：WebSocket → VPS + DeepSeek/Gemini API 直调
+#    (Step 2: AnzhiSocket, Step 4: DeepSeekClient/GeminiClient, Step 7: PathCache,
+#     Step 11: WakeManager 状态上报, Step 13: DiaryManager diary_store)
+# =============================================================================
+
+# TCP 客户端 → VPS WebSocket（任意端口） + DeepSeek/Gemini API
+allow anzhi_app self:tcp_socket { create connect read write getattr setattr };
+allow anzhi_app self:udp_socket { create read write };
+allow anzhi_app node:tcp_socket node_bind;
+allow anzhi_app port:tcp_socket name_connect;
+
+# DNS 解析
+allow anzhi_app self:netlink_route_socket { create read write bind getattr };
+
+# ------------------------------------------------------------------
+# 二、输入注入权限：injectInputEvent
+#    (Step 8: InputInjector, Step 9: InputOps/SystemBackend)
+# ------------------------------------------------------------------
+
+# 反射调用 IInputManager.injectInputEvent()
+# 通过 ServiceManager.getService("input") 获取 Binder
+allow anzhi_app inputflinger:fd use;
+allow anzhi_app inputflinger:binder call;
+
+# InputManagerService binder 调用
+allow anzhi_app input_manager_service:service_manager find;
+
+# ------------------------------------------------------------------
+# 三、VirtualDisplay + 截图权限
+#    (Step 8: CoordinateMapper, Step 9: VirtualDisplayManager/DisplayOps/
+#     CaptureOps/SystemBackend)
+# ------------------------------------------------------------------
+
+# DisplayManager / SurfaceFlinger
+allow anzhi_app surfaceflinger:binder call;
+allow anzhi_app surfaceflinger:fd use;
+allow surfaceflinger anzhi_app:fd use;
+allow surfaceflinger anzhi_app:binder call;
+
+# DisplayManagerService binder 调用
+allow anzhi_app display_service:service_manager find;
+
+# SurfaceControl.screenshot() — 隐藏 API 截图
+allow anzhi_app graphicsstats_service:service_manager find;
+
+# ImageReader surface 创建
+allow anzhi_app gpu_device:chr_file rw_file_perms;
+allow anzhi_app ashmem_device:chr_file { open read write getattr };
+
+# ------------------------------------------------------------------
+# 四、文件访问权限
+#    (Step 2: SQLite, Step 3: CDP WebView, Step 6: Chat assets,
+#     Step 7: PathCache, Step 10: Notification cache, Step 11: WakeManager DB,
+#     Step 13: DiaryManager DB)
+# ------------------------------------------------------------------
+
+# ── 4.1 数据目录：/data/data/com.anzhi.os/ ──
+# SQLite 数据库：anzhi_audit.db, anzhi_sessions.db, path_cache.db,
+# notification_cache.db, window_urls.db, wake_state.db, diary.db
+allow anzhi_app anzhi_data_file:dir {
+    open read write search getattr setattr create add_name remove_name
+};
+allow anzhi_app anzhi_data_file:file {
+    open read write getattr setattr create unlink append
+};
+allow anzhi_app anzhi_data_file:filesystem getattr;
+allow anzhi_app anzhi_data_file:lnk_file read;
+
+# WAL 模式 SQLite 临时文件
+allow anzhi_app anzhi_data_file:file { lock };
+allow anzhi_app anzhi_data_file:dir { lock };
+
+# ── 4.2 SD 卡截图：/sdcard/ ──
+allow anzhi_app sdcardfs:dir { search write add_name };
+allow anzhi_app sdcardfs:file { create write read getattr unlink };
+allow anzhi_app media_rw_data_file:dir { search };
+allow anzhi_app media_rw_data_file:file { read write create };
+
+# ── 4.3 调试文件：/data/local/tmp/ ──
+# crash 日志 + 熔断计数器（陷阱 15）+ DB 备份（陷阱 22）
+allow anzhi_app anzhi_debug_file:dir {
+    open read write search getattr setattr create add_name remove_name
+};
+allow anzhi_app anzhi_debug_file:file {
+    open read write getattr setattr create unlink append
+};
+
+# ── 4.4 系统文件：/system_ext/priv-app/AnzhiOS/ ──
+allow anzhi_app anzhi_system_file:dir { open read search getattr };
+allow anzhi_app anzhi_system_file:file { open read getattr };
+allow anzhi_app anzhi_system_file:filesystem getattr;
+
+# ── 4.5 温度传感器 sysfs ──
+# /sys/class/thermal/thermal_zone*/temp（陷阱 17：ThermalGuard）
+allow anzhi_app sysfs_thermal:dir { open read search getattr };
+allow anzhi_app sysfs_thermal:file { open read getattr };
+
+# ── 4.6 proc 文件系统 ──
+# /proc/stat, /proc/meminfo — 设备状态监控
+allow anzhi_app proc_stat:file { open read getattr };
+allow anzhi_app proc_meminfo:file { open read getattr };
+allow anzhi_app proc:file { open read getattr };
+
+# ── 4.7 /dev ──
+allow anzhi_app device:dir { open read search getattr };
+
+# =============================================================================
+# 五、系统服务 binder 访问
+#    (Step 8: AccessibilityService/CoordinateMapper, Step 9: ActionExecutor,
+#     Step 10: NotificationAssistant, Step 11: WakeManager,
+#     Step 12: Dashboard/LockScreen/Drawer, Step 13: DiaryManager)
+# =============================================================================
+
+# ── 5.1 App 到 anzhi 服务的 binder 访问 ──
+allow appdomain anzhi_service:service_manager find;
+allow anzhi_app anzhi_service:service_manager add;
+
+# ── 5.2 安知访问系统服务 ──
+# AlarmManager（Step 11: WakeManager 定时器 + Step 13: DiaryManager 定时器）
+allow anzhi_app alarm_service:service_manager find;
+
+# PowerManager（Step 11: 判断屏幕状态 + wakelock）
+allow anzhi_app power_service:service_manager find;
+
+# NotificationManager（Step 10: 发通知 + Step 11: 唤醒通知）
+allow anzhi_app notification_service:service_manager find;
+
+# WindowManager（Step 8: CoordinateMapper 坐标映射）
+allow anzhi_app window_service:service_manager find;
+
+# ActivityManager（Step 9: TaskDisplayGuard 任务逃逸检测）
+allow anzhi_app activity_service:service_manager find;
+
+# PackageManager（Step 12: DrawerProvider 应用分类）
+allow anzhi_app package_service:service_manager find;
+
+# UserManager
+allow anzhi_app user_service:service_manager find;
+
+# ClipboardService（Step 8: InputInjector 初始化 ClipboardManager）
+allow anzhi_app clipboard_service:service_manager find;
+
+# Sensors（Step 16 预留：睡眠报告 TYPE_SIGNIFICANT_MOTION）
+allow anzhi_app sensors_service:service_manager find;
+
+# Geofence / Location（Step 12/16 预留）
+allow anzhi_app location_service:service_manager find;
+
+# =============================================================================
+# 六、AccessibilityService 权限
+#    (Step 8: AnzhiAccessibility.kt — UI 树读取 + ACTION_SET_TEXT 注入)
+# =============================================================================
+
+# 无障碍服务需要系统 UID 才能调 performAction
+# （不需要单独的 binder 类型 —— AccessibilityService 走的 appdomain）
+
+# =============================================================================
+# 七、Notification Assistant 权限
+#    (Step 10: AnzhiNotificationAssistant.kt — 通知全权接管)
+# =============================================================================
+
+# adjustNotification / adjustNotifications — 通知助手的核心 API
+# 需要访问 INotificationManager（notification_service binder）
+
+# =============================================================================
+# 八、Shell 命令执行权限
+#    (Step 5: CC agent loop — Runtime.exec(), Step 8: CaptureOps — screencap,
+#     Step 9: ActionExecutor — am/input/cmd)
+# =============================================================================
+
+# 允许安知进程 fork 子进程执行 shell 命令
+allow anzhi_app self:process { fork execmem };
+
+# shell 命令执行（CC agent loop 的 write_file/read_file/run_command）
+allow anzhi_app shell_exec:file { open read getattr execute execute_no_trans };
+allow anzhi_app toolbox_exec:file { open read getattr execute execute_no_trans };
+allow anzhi_app system_file:file { open read getattr execute execute_no_trans };
+
+# screencap 命令执行（CaptureOps 兜底）
+allow anzhi_app proc_cmdline:file { open read getattr };
+
+# =============================================================================
+# 九、WebView 沙盒进程权限
+#    (Step 3: CdpWebViewService — :webview 独立进程)
+# =============================================================================
+
+# 主进程与 WebView 进程通信（AIDL Binder IPC）
+allow anzhi_app anzhi_webview:binder { call transfer };
+allow anzhi_webview anzhi_app:binder { call transfer };
+
+# WebView 进程同样需要网络权限（加载 Gemini 官网）
+allow anzhi_webview self:tcp_socket { create connect read write getattr setattr };
+allow anzhi_webview node:tcp_socket node_bind;
+allow anzhi_webview port:tcp_socket name_connect;
+
+# WebView 进程的 JS 引擎和数据
+allow anzhi_webview anzhi_data_file:dir { open read search getattr };
+allow anzhi_webview anzhi_data_file:file { open read getattr };
+
+# WebView rendering
+allow anzhi_webview gpu_device:chr_file rw_file_perms;
+allow anzhi_webview ashmem_device:chr_file { open read write getattr };
+
+# =============================================================================
+# 十、Foreground Service 权限
+#    (Step 2: dataSync, Step 3: specialUse, Step 10: dataSync)
+# =============================================================================
+
+# AnzhiManagerService + AnzhiNotificationAssistant 声明了 foregroundServiceType="dataSync"
+# CdpWebViewService 声明了 foregroundServiceType="specialUse"
+
+# =============================================================================
+# 十一、Broadcast 权限
+#    (Step 11: BOOT_COMPLETED/ACTION_BATTERY_CHANGED,
+#     Step 15 预留: ACTION_SHUTDOWN)
+# =============================================================================
+
+# BOOT_COMPLETED 广播（冷启动恢复）
+allow anzhi_app system_server:binder call;
+
+# 广播接收（电池变更 / 关机 / 开机）
+allow anzhi_app radio_service:service_manager find;
+allow anzhi_app bootanim_exec:file { open read getattr };
+
+# =============================================================================
+# 十二、IPC Binder 权限
+#    (Step 2: AIDL — IAnzhiService, Step 3: ICdpWebViewService/ICdpCallback,
+#     Step 8: AccessibilityService Binder)
+# =============================================================================
+
+# Binder 设备访问
+allow anzhi_app binder_device:chr_file { open read write ioctl };
+
+# servicemanager binder
+allow anzhi_app servicemanager:binder { call transfer };
+
+# 允许其他 appdomain 通过 binder 调用 anzhi_service
+allow appdomain anzhi_service:binder { call };
+
+# =============================================================================
+# 十三、capability 权限
+#    (系统级操作所需)
+# =============================================================================
+
+allow anzhi_app self:capability {
+    net_raw          # 网络原始套接字
+    net_admin        # 网络管理（WebSocket 保活）
+    sys_nice         # 设置进程优先级
+    sys_ptrace       # CC agent loop 子进程管理
+    kill             # 杀子进程（cc command timeout destroyForcibly）
+    dac_override     # 覆盖文件权限检查（sdcard 截图）
+    dac_read_search  # 读取搜索权限
+};
+
+# =============================================================================
+# 十四、属性（property）权限
+# =============================================================================
+
+# SELinux 模式读取
+# getenforce / setenforce（仅开发阶段）
+# 正式阶段不设 setenforce
+allow anzhi_app security_policy_service:service_manager find;
+
+# =============================================================================
+# 十五、Neverallow 规则（安全边界，不可破）
+# =============================================================================
+
+# 禁止非系统应用注册 anzhi 服务
+neverallow { domain -anzhi_app -system_server } anzhi_service:service_manager add;
+
+# 禁止非 anzhi_app 的进程写入 anzhi 数据文件
+neverallow { domain -anzhi_app -system_server -init } anzhi_data_file:file {
+    write append create
+};
+
+# 禁止执行 anzhi 数据文件（代码注入防护）
+neverallow domain anzhi_data_file:file execute;
+neverallow domain anzhi_data_file:file execute_no_trans;
+
+# 禁止非 anzhi_app 的进程写入 anzhi 调试文件
+neverallow { domain -anzhi_app -system_server -init } anzhi_debug_file:file {
+    write append create
+};
+
+# 禁止 WebView 进程读 anzhi_app 的私有数据（DB/审计日志）
+neverallow anzhi_webview anzhi_data_file:file { write append create unlink };
+
+# =============================================================================
+# 十七、AnzhiCoreService（独立进程系统服务，注册为 "anzhi_core"）
+#    (vendor/anzhi/anzhicore/ — AnzhiCoreService.java)
+# =============================================================================
+
+# ── 类型声明 ──
+type anzhi_core_service, system_api_service, service_manager_type;
+type anzhi_core_app, appdomain;
+
+# anzhi_app 可以找到 anzhi_core_service
+allow anzhi_app anzhi_core_service:service_manager find;
+
+# anzhi_core_app 权限
+allow anzhi_core_app self:capability { net_raw net_admin sys_nice sys_ptrace };
+allow anzhi_core_app self:udp_socket create_socket_perms;
+allow anzhi_core_app self:tcp_socket create_socket_perms;
+
+# AnzhiCoreService 用 SurfaceFlinger 截屏
+allow anzhi_core_app surfaceflinger_service:service_manager find;
+allow anzhi_core_app flinger:fd use;
+allow anzhi_core_app flinger:binder { call transfer };
+
+# AnzhiCoreService 用 InputFlinger 注入
+allow anzhi_core_app inputflinger:binder { call transfer };
+
+# AnzhiCoreService 读系统属性
+allow anzhi_core_app anzhi_prop:property_service set;
+allow anzhi_core_app system_prop:property_service set;
+set_prop(anzhi_core_app, anzhi_prop);
+
+# AnzhiCoreService binder 通信
+binder_use(anzhi_core_app);
+binder_service(anzhi_core_app);
+allow anzhi_core_app servicemanager:binder { call };
+allow anzhi_core_app service_manager:service_manager { find add };
+allow anzhi_core_app appdomain:binder { call transfer };
+allow appdomain anzhi_core_service:service_manager find;
+allow appdomain anzhi_core_app:binder { call transfer };
+
+# AnzhiCoreService 写临时文件
+allow anzhi_core_app cache_file:dir create_dir_perms;
+allow anzhi_core_app cache_file:file create_file_perms;
+
+# =============================================================================
+# 十八、Enforcing 模式切换（Step 14）
+# =============================================================================
+#
+# 当前状态：Permissive（开发阶段）
+# 目标状态：Enforcing（生产阶段）
+#
+# 切换方式：
+#   1. 编译时从 device tree BoardConfig.mk 移除 permissive 标志
+#      BOARD_KERNEL_CMDLINE += androidboot.selinux=permissive  → 删除此行
+#   2. 或刷机后手动：adb root && adb shell setenforce 1
+#
+# 验证：
+#   - AVC 日志收集脚本：scripts/collect_avc.sh（Permissive 下持续运行）
+#   - 确认零 avc: denied 后切换 Enforcing
+#   - scripts/collect_avc.sh -p 生成规则建议 → 补充到本文件
+#
+# =============================================================================

@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>安知手机 · 聊天</title>
+<style>
+@font-face {
+  font-family: "FusionPixel";
+  src: url("file:///android_asset/fusion-pixel.otf") format("opentype");
+  font-display: swap;
+}
+
+:root {
+  --bg: #131314;
+  --accent: #8adbd2;
+  --accent-dim: rgba(138,219,210,0.12);
+  --accent-mid: rgba(138,219,210,0.35);
+  --text: #b2dfdb;
+  --text-dim: rgba(178,223,219,0.45);
+  --text-faint: rgba(178,223,219,0.2);
+  --cami-bg: rgba(178,223,219,0.12);
+  --cami-border: rgba(178,223,219,0.25);
+  --anzhi-bg: #091424;
+  --anzhi-border: rgba(26,115,232,0.4);
+  --font-mono: "Fira Code", Consolas, monospace;
+  --font-ui: "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #0a0a0b;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  height: 100vh;
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* ---- 背景网格 ---- */
+.bg-grid {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    linear-gradient(rgba(138,219,210,0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(138,219,210,0.02) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at 50% 50%, black 30%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse at 50% 50%, black 30%, transparent 75%);
+}
+
+/* ---- 侧栏 (Enzo 同款) ---- */
+.sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0,0,0,0.4);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s;
+}
+.sidebar-overlay.open { opacity: 1; pointer-events: auto; }
+
+.sidebar {
+  position: fixed;
+  z-index: 51;
+  left: 0; top: 0; bottom: 0;
+  width: 280px;
+  background: #1a1d22;
+  border-right: 1px solid rgba(138,219,210,0.08);
+  transform: translateX(-290px);
+  transition: transform 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 16px;
+  padding-top: 48px;
+  overflow-y: auto;
+}
+.sidebar.open { transform: translateX(0); }
+.sidebar::-webkit-scrollbar { display: none; }
+
+.new-timeline-btn {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid rgba(138,219,210,0.25);
+  padding: 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  margin-bottom: 18px;
+  width: 100%;
+  text-align: center;
+  letter-spacing: 1px;
+  transition: all 0.2s;
+}
+.new-timeline-btn:active {
+  background: rgba(138,219,210,0.08);
+  border-color: var(--accent-mid);
+}
+
+.sidebar-label {
+  font-size: 11px;
+  color: var(--accent-mid);
+  letter-spacing: 2px;
+  font-family: var(--font-mono);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+
+.sidebar-section { margin-bottom: 18px; }
+
+.search-box {
+  position: relative;
+  margin-bottom: 12px;
+}
+.search-box svg {
+  position: absolute;
+  left: 10px; top: 50%;
+  transform: translateY(-50%);
+  color: rgba(178,223,219,0.3);
+  pointer-events: none;
+}
+.search-input {
+  width: 100%;
+  padding: 9px 12px 9px 32px;
+  background: rgba(178,223,219,0.06);
+  border: 1px solid rgba(178,223,219,0.12);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.2s;
+}
+.search-input::placeholder { color: var(--text-faint); }
+.search-input:focus { border-color: var(--accent-mid); }
+
+.hist-item {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+  letter-spacing: 0.5px;
+}
+.hist-item:active { background: rgba(138,219,210,0.08); }
+.hist-item.active {
+  background: rgba(138,219,210,0.1);
+  color: var(--accent);
+}
+
+.hist-list { max-height: 260px; overflow-y: auto; }
+.hist-list::-webkit-scrollbar { display: none; }
+
+/* ---- 状态栏 ---- */
+.status-bar {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 28px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+/* ---- 聊天区 ---- */
+.chat-area {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.chat-area::-webkit-scrollbar { display: none; }
+
+/* ---- 欢迎语 ---- */
+.welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--text-dim);
+  text-align: center;
+  gap: 6px;
+}
+.welcome h2 {
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--text);
+  letter-spacing: 1px;
+}
+.welcome p {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+}
+
+/* ---- 气泡 ---- */
+.msg {
+  max-width: 78%;
+  padding: 12px 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  word-break: break-word;
+  position: relative;
+  animation: msgIn 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+  margin-bottom: 2px;
+}
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.msg.cami {
+  align-self: flex-end;
+  background: var(--cami-bg);
+  color: var(--text);
+  border-radius: 18px 4px 18px 18px;
+  border: 1px solid var(--cami-border);
+  box-shadow: inset 0 1px 4px rgba(178,223,219,0.1), 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.msg.anzhi {
+  align-self: flex-start;
+  background: var(--anzhi-bg);
+  color: #e8f0fe;
+  border-radius: 4px 18px 18px 18px;
+  border: 1px solid var(--anzhi-border);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.25), inset 0 1px 2px rgba(26,115,232,0.2);
+}
+
+/* 系统消息（安知大脑切换 / 连接状态等） */
+.msg.system {
+  align-self: center;
+  max-width: 85%;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(178,223,219,0.1);
+  text-align: center;
+  animation: msgIn 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.msg .time {
+  position: absolute;
+  bottom: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  opacity: 0.25;
+  white-space: nowrap;
+}
+.msg.cami .time { left: -38px; }
+.msg.anzhi .time { right: -38px; }
+
+/* ---- 打字指示器 ---- */
+.typing {
+  align-self: flex-start;
+  display: none;
+  padding: 12px 16px;
+  background: var(--anzhi-bg);
+  border-radius: 4px 18px 18px 18px;
+  border: 1px solid var(--anzhi-border);
+  color: rgba(232,240,254,0.5);
+  font-size: 13px;
+}
+.typing.show { display: block; }
+.typing .dots { animation: blink 1.4s infinite both; }
+.typing .dots:nth-child(2) { animation-delay: .2s; }
+.typing .dots:nth-child(3) { animation-delay: .4s; }
+@keyframes blink {
+  0%, 20% { opacity: 0; }
+  50% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ---- 输入区 ---- */
+.input-area {
+  position: relative;
+  z-index: 3;
+  padding: 12px 16px 22px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  border-top: 1px solid rgba(138,219,210,0.06);
+  flex-shrink: 0;
+}
+.input-area textarea {
+  flex: 1;
+  min-height: 40px;
+  max-height: 120px;
+  padding: 10px 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(178,223,219,0.15);
+  background: rgba(178,223,219,0.04);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  resize: none;
+  font-family: var(--font-ui);
+  line-height: 1.4;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.input-area textarea:focus {
+  border-color: var(--accent-mid);
+  box-shadow: 0 0 0 1px rgba(138,219,210,0.1), 0 0 16px rgba(138,219,210,0.1);
+}
+.input-area textarea::placeholder {
+  color: var(--text-faint);
+}
+
+/* 输入框锁定状态 */
+.input-area.locked textarea {
+  opacity: 0.4;
+  pointer-events: none;
+  background: rgba(178,223,219,0.02);
+  border-color: rgba(178,223,219,0.06);
+}
+
+.send-btn {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--accent-mid);
+  background: rgba(138,219,210,0.1);
+  color: var(--accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.send-btn:active {
+  background: rgba(138,219,210,0.25);
+  transform: scale(0.95);
+}
+.send-btn.disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+/* ---- 响应式 ---- */
+@media (max-width: 420px) {
+  .status-bar { padding: 16px 16px 0; }
+  .chat-area { padding: 12px 12px; }
+  .input-area { padding: 10px 12px 16px; }
+}
+</style>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<!-- 侧栏 (Enzo 同款) -->
+<div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+<div class="sidebar" id="sidebar">
+  <button class="new-timeline-btn" onclick="newTimeline()">+ 开启新的时间线</button>
+
+  <div class="sidebar-section">
+    <div class="sidebar-label">记忆源</div>
+    <div class="hist-item active">官网时间线</div>
+    <div class="hist-item">API 时间线</div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-label">记忆回溯</div>
+    <div class="search-box">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" class="search-input" placeholder="搜索记忆..."
+             onkeydown="if(event.key==='Enter'){searchMemory(this.value)}">
+    </div>
+    <div class="hist-list" id="hist-list">
+      <!-- 动态填充 -->
+    </div>
+  </div>
+</div>
+
+<div class="status-bar">
+  <span id="sb-time">--:--</span>
+  <span id="sb-status">安知在线</span>
+</div>
+
+<div class="chat-area" id="chat-area">
+  <!-- 欢迎语 -->
+  <div class="welcome" id="welcome">
+    <h2>Cami，欢迎回家。</h2>
+    <p>// anzhi online</p>
+  </div>
+
+  <!-- 打字指示器 -->
+  <div class="typing" id="typing">
+    安知正在输入<span class="dots">.</span><span class="dots">.</span><span class="dots">.</span>
+  </div>
+</div>
+
+<div class="input-area" id="input-area">
+  <textarea placeholder="跟安知说点什么..." id="user-input" rows="1"
+    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+  <div class="send-btn" id="send-btn" onclick="send()">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+    </svg>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════
+// 全局变量
+// ═══════════════════════════════════════
+
+var chat = document.getElementById('chat-area');
+var welcome = document.getElementById('welcome');
+var typing = document.getElementById('typing');
+var input = document.getElementById('user-input');
+var sendBtn = document.getElementById('send-btn');
+var inputArea = document.getElementById('input-area');
+var isLocked = false;
+
+// ═══════════════════════════════════════
+// 时钟
+// ═══════════════════════════════════════
+
+function updateClock() {
+  var now = new Date();
+  document.getElementById('sb-time').textContent =
+    String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+}
+updateClock();
+setInterval(updateClock, 30000);
+
+// ═══════════════════════════════════════
+// 侧栏
+// ═══════════════════════════════════════
+
+var sidebar = document.getElementById('sidebar');
+var overlay = document.getElementById('sidebar-overlay');
+var sidebarOpen = false;
+
+function openSidebar() {
+  sidebarOpen = true;
+  sidebar.classList.add('open');
+  overlay.classList.add('open');
+}
+function closeSidebar() {
+  sidebarOpen = false;
+  sidebar.classList.remove('open');
+  overlay.classList.remove('open');
+}
+window.openSidebar = openSidebar;
+window.closeSidebar = closeSidebar;
+
+// 手势：右滑打开，侧栏左滑关闭
+document.addEventListener('touchstart', function(e) {
+  window._gestureX = e.touches[0].clientX;
+  window._gestureY = e.touches[0].clientY;
+  window._gestureActive = true;
+}, { passive: true });
+
+document.addEventListener('touchmove', function(e) {
+  if (!window._gestureActive) return;
+  var dx = e.touches[0].clientX - window._gestureX;
+  var dy = e.touches[0].clientY - window._gestureY;
+  if (!sidebarOpen && dx > 30 && Math.abs(dx) > Math.abs(dy)*1.5) {
+    openSidebar();
+    window._gestureActive = false;
+  }
+  if (sidebarOpen && dx < -30 && Math.abs(dx) > Math.abs(dy)*1.5) {
+    closeSidebar();
+    window._gestureActive = false;
+  }
+}, { passive: true });
+
+document.addEventListener('touchend', function() { window._gestureActive = false; });
+
+// ═══════════════════════════════════════
+// 消息显示
+// ═══════════════════════════════════════
+
+function timeStr() {
+  var n = new Date();
+  return String(n.getHours()).padStart(2,'0') + ':' + String(n.getMinutes()).padStart(2,'0');
+}
+
+function esc(s) {
+  var d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+/**
+ * 添加一条消息气泡。
+ * @param {string} text  消息文本
+ * @param {string} who   "cami" | "anzhi" | "system"
+ */
+function addMsg(text, who) {
+  if (welcome) { welcome.remove(); welcome = null; }
+  var div = document.createElement('div');
+  div.className = 'msg ' + who;
+
+  if (who === 'system') {
+    div.textContent = text;
+  } else {
+    div.innerHTML = esc(text) + '<span class="time">' + timeStr() + '</span>';
+  }
+
+  chat.insertBefore(div, typing);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+/**
+ * 添加系统消息（居中灰色小字）。
+ */
+function addSystemMsg(text) {
+  addMsg(text, 'system');
+}
+
+/**
+ * 显示/隐藏打字指示器。
+ * @param {boolean} show
+ */
+function showTyping(show) {
+  if (show) {
+    typing.classList.add('show');
+  } else {
+    typing.classList.remove('show');
+  }
+  chat.scrollTop = chat.scrollHeight;
+}
+
+/**
+ * 锁定/解锁输入框（陷阱 14）。
+ * @param {boolean} locked
+ */
+function lockInput(locked) {
+  isLocked = locked;
+  if (locked) {
+    inputArea.classList.add('locked');
+    sendBtn.classList.add('disabled');
+    input.blur();
+  } else {
+    inputArea.classList.remove('locked');
+    sendBtn.classList.remove('disabled');
+    input.focus();
+  }
+}
+
+// ═══════════════════════════════════════
+// Bug 1 修复：从 Bridge 加载会话历史
+// ═══════════════════════════════════════
+
+/**
+ * chat.html 加载完成后由 Kotlin 调用。从 Bridge 拉取当前会话的历史消息并渲染。
+ */
+function loadHistoryFromBridge() {
+  if (!window.__anzhiChat || typeof __anzhiChat.loadHistoryMessages !== 'function') {
+    return;
+  }
+  try {
+    var json = __anzhiChat.loadHistoryMessages();
+    var messages = JSON.parse(json);
+    if (messages.length > 0 && welcome) {
+      welcome.remove();
+      welcome = null;
+    }
+    for (var i = 0; i < messages.length; i++) {
+      var m = messages[i];
+      var who = (m.role === 'user') ? 'cami' : 'anzhi';
+      addMsg(m.content, who);
+    }
+    // 滚动到底部
+    chat.scrollTop = chat.scrollHeight;
+  } catch(e) {
+    console.error('loadHistoryFromBridge 失败: ' + e);
+  }
+}
+
+/**
+ * 清空聊天区所有气泡，恢复欢迎语。
+ */
+function clearChatArea() {
+  // 移除所有 .msg 元素
+  var msgs = chat.querySelectorAll('.msg');
+  for (var i = 0; i < msgs.length; i++) {
+    msgs[i].remove();
+  }
+  // 恢复欢迎语
+  if (!welcome) {
+    welcome = document.createElement('div');
+    welcome.className = 'welcome';
+    welcome.id = 'welcome';
+    welcome.innerHTML = '<h2>Cami，欢迎回家。</h2><p>// anzhi online</p>';
+    chat.insertBefore(welcome, typing);
+  }
+}
+
+// ═══════════════════════════════════════
+// Bug 2 修复：侧栏时间线列表
+// ═══════════════════════════════════════
+
+/** 当前选中的会话 ID（侧栏高亮用） */
+var currentSessionId = '';
+
+/**
+ * chat.html 加载完成后由 Kotlin 调用。从 Bridge 拉取会话列表并渲染侧栏 hist-list。
+ */
+function loadSessionListFromBridge() {
+  if (!window.__anzhiChat || typeof __anzhiChat.getSessionList !== 'function') {
+    return;
+  }
+  try {
+    currentSessionId = __anzhiChat.getSessionId();
+    var json = __anzhiChat.getSessionList();
+    var sessions = JSON.parse(json);
+    renderSessionList(sessions);
+  } catch(e) {
+    console.error('loadSessionListFromBridge 失败: ' + e);
+  }
+}
+
+/**
+ * 渲染侧栏时间线列表。
+ * @param {Array} sessions  [{sessionId, title, createdAt, updatedAt, messageCount}]
+ */
+function renderSessionList(sessions) {
+  var list = document.getElementById('hist-list');
+  list.innerHTML = '';
+
+  if (sessions.length === 0) {
+    var empty = document.createElement('div');
+    empty.className = 'hist-item';
+    empty.textContent = '还没有对话记录';
+    empty.style.opacity = '0.5';
+    list.appendChild(empty);
+    return;
+  }
+
+  for (var i = 0; i < sessions.length; i++) {
+    var s = sessions[i];
+    var div = document.createElement('div');
+    div.className = 'hist-item';
+    if (s.sessionId === currentSessionId) {
+      div.classList.add('active');
+    }
+    // 显示：日期 + 标题
+    var d = new Date(s.updatedAt);
+    var dateStr = (d.getMonth()+1) + '/' + d.getDate() + ' ';
+    div.textContent = dateStr + (s.title || '新对话');
+    div.setAttribute('data-session-id', s.sessionId);
+    div.onclick = function() {
+      switchToSession(this.getAttribute('data-session-id'));
+    };
+    list.appendChild(div);
+  }
+}
+
+/**
+ * 点击侧栏 hist-item → 切换到目标会话。
+ * @param {string} sessionId
+ */
+function switchToSession(sessionId) {
+  if (!sessionId || sessionId === currentSessionId) return;
+
+  if (!window.__anzhiChat || typeof __anzhiChat.switchSession !== 'function') {
+    return;
+  }
+
+  try {
+    // 从 Kotlin 获取目标会话历史
+    var json = __anzhiChat.switchSession(sessionId);
+    var messages = JSON.parse(json);
+
+    // 清空并重新渲染
+    clearChatArea();
+
+    if (messages.length > 0 && welcome) {
+      welcome.remove();
+      welcome = null;
+    }
+    for (var i = 0; i < messages.length; i++) {
+      var m = messages[i];
+      var who = (m.role === 'user') ? 'cami' : 'anzhi';
+      addMsg(m.content, who);
+    }
+
+    // 更新高亮
+    currentSessionId = sessionId;
+    var items = document.querySelectorAll('.hist-item');
+    for (var j = 0; j < items.length; j++) {
+      items[j].classList.remove('active');
+      if (items[j].getAttribute('data-session-id') === sessionId) {
+        items[j].classList.add('active');
+      }
+    }
+
+    // 关闭侧栏
+    closeSidebar();
+    chat.scrollTop = chat.scrollHeight;
+  } catch(e) {
+    console.error('switchToSession 失败: ' + e);
+  }
+}
+
+// ═══════════════════════════════════════
+// 发送消息 —— 通过 Android Bridge
+// ═══════════════════════════════════════
+
+function send() {
+  if (isLocked) return;  // 陷阱 14：锁定期间不允许多条消息并发
+
+  var text = input.value.trim();
+  if (!text) return;
+
+  // 立即显示 Cami 气泡（raw）
+  addMsg(text, 'cami');
+
+  // 清空输入
+  input.value = '';
+  input.style.height = 'auto';
+
+  // 锁定输入 → 防止异步真空期吞输入（陷阱 14）
+  lockInput(true);
+
+  // 显示打字指示器
+  showTyping(true);
+
+  // 通过 JS Bridge 发给 Kotlin
+  // Kotlin 端 AnzhiChatSession.processMessage() 接管后续流程
+  if (window.__anzhiChat && typeof __anzhiChat.sendMessage === 'function') {
+    try {
+      __anzhiChat.sendMessage(text);
+    } catch(e) {
+      // Bridge 调用失败（不应发生，兜底解锁）
+      console.error('Bridge sendMessage 失败: ' + e);
+      lockInput(false);
+      showTyping(false);
+      addSystemMsg('消息发送失败，请重试');
+    }
+  } else {
+    // 无 Bridge（独立预览模式）——模拟回复
+    console.warn('__anzhiChat 不可用，使用模拟回复');
+    var replies = [
+      '嗯，收到。',
+      '好的，我来处理。',
+      '明白啦～',
+      '行，交给我。',
+      '有道理，让我想想。'
+    ];
+    var delay = 800 + Math.random() * 1200;
+    setTimeout(function() {
+      showTyping(false);
+      addMsg(replies[Math.floor(Math.random() * replies.length)], 'anzhi');
+      lockInput(false);
+    }, delay);
+  }
+}
+
+/**
+ * 新建时间线（通过 Bridge 通知 Kotlin 创建新会话）。
+ */
+function newTimeline() {
+  closeSidebar();
+
+  // 清空 UI
+  clearChatArea();
+
+  // 通知 Kotlin 创建新会话
+  if (window.__anzhiChat && typeof __anzhiChat.newTimeline === 'function') {
+    try {
+      __anzhiChat.newTimeline();
+      // 更新 JS 侧的当前会话 ID
+      currentSessionId = __anzhiChat.getSessionId();
+      // 刷新侧栏列表
+      loadSessionListFromBridge();
+    } catch(e) {
+      console.error('Bridge newTimeline 失败: ' + e);
+    }
+  }
+}
+
+/**
+ * 侧栏搜索记忆（通过 Bridge 通知 Kotlin）。
+ */
+function searchMemory(query) {
+  if (!query.trim()) return;
+  if (window.__anzhiChat && typeof __anzhiChat.searchMemory === 'function') {
+    try {
+      __anzhiChat.searchMemory(query);
+    } catch(e) {
+      console.error('Bridge searchMemory 失败: ' + e);
+    }
+  }
+}
+
+// ═══════════════════════════════════════
+// textarea 自适应高度
+// ═══════════════════════════════════════
+
+input.addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+// ═══════════════════════════════════════
+// 调试：暴露到全局作用域
+// ═══════════════════════════════════════
+
+window.addMsg = addMsg;
+window.addSystemMsg = addSystemMsg;
+window.showTyping = showTyping;
+window.lockInput = lockInput;
+window.updateClock = updateClock;
+window.openSidebar = openSidebar;
+window.closeSidebar = closeSidebar;
+window.loadHistoryFromBridge = loadHistoryFromBridge;
+window.loadSessionListFromBridge = loadSessionListFromBridge;
+window.clearChatArea = clearChatArea;
+window.switchToSession = switchToSession;
+</script>
+
+</body>
+</html>

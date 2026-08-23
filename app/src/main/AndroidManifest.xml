@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.anzhi.os">
+
+    <!-- 权限：操控手机的基本权限 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
+    <!-- 系统级权限（需要 Magisk/LSPosed 授予） -->
+    <uses-permission android:name="android.permission.INJECT_EVENTS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
+    <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" />
+    <uses-permission android:name="android.permission.BIND_NOTIFICATION_ASSISTANT_SERVICE" />
+    <uses-permission android:name="android.permission.READ_FRAME_BUFFER" />
+
+    <!-- CDP WebView 需要的权限 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- 安知自定义权限 -->
+    <permission
+        android:name="com.anzhi.os.permission.SUBMIT_ANZHI_REQUEST"
+        android:protectionLevel="signature|privileged" />
+
+    <uses-permission android:name="com.anzhi.os.permission.SUBMIT_ANZHI_REQUEST" />
+
+    <application
+        android:allowBackup="true"
+        android:label="安知手机"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <!-- 系统管理 Service：AIDL Binder + 会话管理 + 动作执行 -->
+        <service
+            android:name=".AnzhiManagerService"
+            android:exported="true"
+            android:permission="com.anzhi.os.permission.SUBMIT_ANZHI_REQUEST"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- 开机自启接收器：BOOT_COMPLETED → 拉起 AnzhiManagerService -->
+        <receiver
+            android:name=".AnzhiBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 无障碍服务：读 UI 树 + 注入操作 -->
+        <service
+            android:name=".AnzhiAccessibility"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_config" />
+        </service>
+
+        <!-- 通知监听：接管通知（基础版，仅监听） -->
+        <service
+            android:name=".AnzhiNotification"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- Step 10：通知全权接管（Notification Assistant，系统级正式角色）
+             拥有通知全权控制：改重要度/排序/隐藏敏感内容/加操作按钮/预设回复 -->
+        <service
+            android:name=".AnzhiNotificationAssistant"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_ASSISTANT_SERVICE"
+            android:foregroundServiceType="dataSync">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationAssistantService" />
+            </intent-filter>
+        </service>
+
+        <!-- ── Step 15: 梦境 & 入眠系统（DreamService）── -->
+
+        <!-- 安知梦境服务：充电时自动进入浅睡眠（呼吸光晕动画）
+             通过 DreamManagerService 管理生命周期：start/stop/doze/wake
+             AOSP 原话："Entering dreamland." "Gently waking up from dream." -->
+        <service
+            android:name=".dream.AnzhiDreamService"
+            android:exported="true"
+            android:permission="android.permission.BIND_DREAM_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.dreams.DreamService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
+        <!-- 关机告别接收器：监听 ACTION_SHUTDOWN，在关机前渲染深睡画面 + 说出最后一句话
+             AOSP ShutdownThread 给广播 10 秒窗口，安知在 2% 阶段就能完成告别 -->
+        <receiver
+            android:name=".dream.AnzhiDreamService$ShutdownReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.ACTION_SHUTDOWN" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ── Step 3: CDP WebView 子系统 ── -->
+
+        <!-- CDP WebView Service：独立沙盒进程，管 3 个 Gemini WebView 实例 -->
+        <service
+            android:name=".cdp.CdpWebViewService"
+            android:process=":webview"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <intent-filter>
+                <action android:name="com.anzhi.os.action.CDP_WEBVIEW_SERVICE" />
+            </intent-filter>
+        </service>
+
+        <!-- CAPTCHA 手动解盾 Activity（透明主题，浮在最上面） -->
+        <activity
+            android:name=".cdp.CaptchaActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
+
+        <!-- ── Step 6: Chat 界面 ── -->
+
+        <!-- 主聊天 Activity（Cami 长按电源键唤起） -->
+        <activity
+            android:name=".chat.AnzhiChatActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
+            android:windowSoftInputMode="adjustResize"
+            android:hardwareAccelerated="true" />
+
+        <!-- ── Step 12: 仪表盘 + 锁屏 + 智能抽屉 UI ── -->
+
+        <!-- 锁屏 Activity（Compose 版） -->
+        <activity
+            android:name=".ui.lockscreen.LockActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
+            android:excludeFromRecents="true"
+            android:taskAffinity="" />
+
+        <!-- 仪表盘主界面（Compose 版，6 组件卡片 + 下滑回桌面 + 长按电源键唤聊天） -->
+        <activity
+            android:name=".dashboard.AnzhiDashboardActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
+            android:hardwareAccelerated="true"
+            android:excludeFromRecents="true" />
+
+    </application>
+
+</manifest>
