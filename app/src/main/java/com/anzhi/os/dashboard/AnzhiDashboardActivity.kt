@@ -17,6 +17,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
 import com.anzhi.os.AnzhiAuditLog
 import com.anzhi.os.AnzhiLockScreenBridge
+import com.anzhi.os.AnzhiManagerService
 import com.anzhi.os.AnzhiDrawerProvider
 import com.anzhi.os.ui.components.TempCardData
 import com.anzhi.os.ui.dashboard.*
@@ -93,6 +94,15 @@ class AnzhiDashboardActivity : ComponentActivity() {
     /** 仪表盘布局顺序（组件 ID 列表，按显示顺序） */
     private var layoutOrder: List<String> = listOf("greeting", "weather", "messages", "calendar", "todos", "tempcard")
 
+    // ── 安知 speak（唤醒链路 → 卡片）──
+
+    private val speakReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val text = intent.getStringExtra("text") ?: return
+            onAnzhiSpeak(text, intent.getBooleanExtra("emergency", false))
+        }
+    }
+
     // ── 电池 ──
 
     private var batteryPercent = 50
@@ -136,6 +146,13 @@ class AnzhiDashboardActivity : ComponentActivity() {
         // 注册电池广播
         registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
 
+        // 安知 speak → 卡片（ManagerService 发的进程内广播，显式限定包名）
+        registerReceiver(
+            speakReceiver,
+            IntentFilter(AnzhiManagerService.ACTION_ANZHI_SPEAK),
+            Context.RECEIVER_NOT_EXPORTED
+        )
+
         // ── Compose 内容 ──
         setContent {
             AnzhiTheme {
@@ -165,6 +182,7 @@ class AnzhiDashboardActivity : ComponentActivity() {
         Log.i(TAG, "仪表盘销毁")
         scope.cancel()
         try { unregisterReceiver(batteryReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(speakReceiver) } catch (_: Exception) {}
         super.onDestroy()
     }
 

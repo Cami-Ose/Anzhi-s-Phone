@@ -40,18 +40,28 @@
 # ------------------------------------------------------------------
 
 # 服务类型 —— Binder 服务 "anzhi" 的 SELinux 标签
-type anzhi_service, system_api_service, system_server_service, service_manager_type;
+# [anzhi-build-fix] 去掉 system_server_service：该属性只允许 system_server 注册
+# （system_server.te 的 add_service(system_server, system_server_service) 对应 neverallow），
+# 安知服务由自己的进程注册。补 app_api_service：非 coredomain 的 appdomain 只能
+# find app_api_service 类型的服务（domain.te:932 neverallow）。
+type anzhi_service, app_api_service, system_api_service, service_manager_type;
 
 # 安知应用域 —— 平台签名的系统应用（priv-app）
-type anzhi_app, appdomain;
+# [anzhi-build-fix] 必须显式声明 domain：app_domain() 只加 appdomain 属性，
+# 而 AOSP 的扩展权限白名单全部以 domain 为源（allowxperm domain ... ioctl ...），
+# 缺少 domain 会导致 8 条 neverallowxperm ioctl { 0 } 违规（domain.te:644/653）。
+# AOSP 惯例见 untrusted_app：type untrusted_app, domain; + app_domain(untrusted_app)
+type anzhi_app, domain;
 app_domain(anzhi_app)
 
 # 安知 WebView 沙盒进程 —— :webview 独立进程
-type anzhi_webview, appdomain;
+type anzhi_webview, domain;
 app_domain(anzhi_webview)
 
 # 安知数据文件 —— /data/data/com.anzhi.os/ 下的数据库、缓存
-type anzhi_data_file, file_type, data_file_type;
+# [anzhi-build-fix] 必须带 app_data_file_type：seapp_contexts 里 type= 指向的类型
+# 会被 checkseapp 校验，缺少该属性会报 "Missing required attribute app_data_file_type"
+type anzhi_data_file, file_type, data_file_type, app_data_file_type;
 
 # 安知系统文件 —— /system_ext/priv-app/AnzhiOS/ 下的 APK
 type anzhi_system_file, file_type, system_file_type;
@@ -59,9 +69,11 @@ type anzhi_system_file, file_type, system_file_type;
 # 安知调试文件 —— /data/local/tmp/ 下的 crash 日志、boot 计数器
 type anzhi_debug_file, file_type;
 
-# 安知系统属性 —— persist.anzhi.* 的 SELinux 标签
-type anzhi_prop, property_type;
-set_prop(anzhi_app, anzhi_prop)
+# 安知系统属性 —— persist.vendor.anzhi.* 的 SELinux 标签
+# [anzhi-build-fix] 必须归属 vendor_property_type：property.te:164 的 neverallow
+# 禁止 domain 访问 property_type 中既非 system_property_type 也非 vendor_property_type 的类型
+type vendor_anzhi_prop, property_type, vendor_property_type;
+set_prop(anzhi_app, vendor_anzhi_prop)
 
 # =============================================================================
 # 一、网络权限：WebSocket → VPS + DeepSeek/Gemini API 直调
@@ -89,7 +101,7 @@ allow anzhi_app inputflinger:fd use;
 allow anzhi_app inputflinger:binder call;
 
 # InputManagerService binder 调用
-allow anzhi_app input_manager_service:service_manager find;
+allow anzhi_app input_service:service_manager find;
 
 # ------------------------------------------------------------------
 # 三、VirtualDisplay + 截图权限
@@ -111,7 +123,10 @@ allow anzhi_app graphicsstats_service:service_manager find;
 
 # ImageReader surface 创建
 allow anzhi_app gpu_device:chr_file rw_file_perms;
-allow anzhi_app ashmem_device:chr_file { open read write getattr };
+# [anzhi-build-fix] ashmem_device:chr_file open 仅对 ephemeral_app/untrusted_app_25/27 开放
+# （domain.te:1653 neverallow）；Android 10+ 的匿名共享内存走 appdomain_tmpfs，
+# 已由 app_domain() 宏授予读写 + ashmem_ioctls 白名单
+# allow anzhi_app ashmem_device:chr_file { open read write getattr };
 
 # ------------------------------------------------------------------
 # 四、文件访问权限
@@ -178,7 +193,9 @@ allow anzhi_app device:dir { open read search getattr };
 # =============================================================================
 
 # ── 5.1 App 到 anzhi 服务的 binder 访问 ──
-allow appdomain anzhi_service:service_manager find;
+# [anzhi-build-fix] isolated_app 只能 find AOSP 白名单内的 4 个服务
+# （isolated_app_all.te:72），故必须排除 isolated 域
+allow { appdomain -isolated_app -isolated_compute_app } anzhi_service:service_manager find;
 allow anzhi_app anzhi_service:service_manager add;
 
 # ── 5.2 安知访问系统服务 ──
@@ -192,7 +209,9 @@ allow anzhi_app power_service:service_manager find;
 allow anzhi_app notification_service:service_manager find;
 
 # WindowManager（Step 8: CoordinateMapper 坐标映射）
-allow anzhi_app window_service:service_manager find;
+# [anzhi-build-fix] window_service 不是 app_api_service，非 coredomain 的 appdomain
+# 不允许 find（domain.te:932）；WindowManager 用应用自身上下文即可，删除该行
+# allow anzhi_app window_service:service_manager find;
 
 # ActivityManager（Step 9: TaskDisplayGuard 任务逃逸检测）
 allow anzhi_app activity_service:service_manager find;
@@ -207,7 +226,7 @@ allow anzhi_app user_service:service_manager find;
 allow anzhi_app clipboard_service:service_manager find;
 
 # Sensors（Step 16 预留：睡眠报告 TYPE_SIGNIFICANT_MOTION）
-allow anzhi_app sensors_service:service_manager find;
+allow anzhi_app sensorservice_service:service_manager find;
 
 # Geofence / Location（Step 12/16 预留）
 allow anzhi_app location_service:service_manager find;
@@ -265,7 +284,8 @@ allow anzhi_webview anzhi_data_file:file { open read getattr };
 
 # WebView rendering
 allow anzhi_webview gpu_device:chr_file rw_file_perms;
-allow anzhi_webview ashmem_device:chr_file { open read write getattr };
+# [anzhi-build-fix] 同 anzhi_app：ashmem_device 对 app 域禁止 open（domain.te:1653）
+# allow anzhi_webview ashmem_device:chr_file { open read write getattr };
 
 # =============================================================================
 # 十、Foreground Service 权限
@@ -301,22 +321,36 @@ allow anzhi_app binder_device:chr_file { open read write ioctl };
 allow anzhi_app servicemanager:binder { call transfer };
 
 # 允许其他 appdomain 通过 binder 调用 anzhi_service
-allow appdomain anzhi_service:binder { call };
+# [anzhi-build-fix] binder 的源和目标都必须在 domain 属性内（domain.te:2222/2223）；
+# anzhi_service 是 service_manager_type 名字标签（不表示进程），不能作 binder 目标。
+# 跨进程调用请走真正的进程域（anzhi_app / anzhi_core_app，见第十二、十七节）
+# allow appdomain anzhi_service:binder { call };
 
 # =============================================================================
 # 十三、capability 权限
 #    (系统级操作所需)
 # =============================================================================
 
-allow anzhi_app self:capability {
-    net_raw          # 网络原始套接字
-    net_admin        # 网络管理（WebSocket 保活）
-    sys_nice         # 设置进程优先级
-    sys_ptrace       # CC agent loop 子进程管理
-    kill             # 杀子进程（cc command timeout destroyForcibly）
-    dac_override     # 覆盖文件权限检查（sdcard 截图）
-    dac_read_search  # 读取搜索权限
-};
+# [anzhi-build-fix] app 域一律禁止持有 capability：
+#   app.te:545     neverallow { appdomain -bluetooth -network_stack -nfc } self:capability *
+#   domain.te:2033 neverallow ... self:capability dac_override
+#   domain.te:2043 neverallow ... self:capability dac_read_search
+#   domain.te:1691 neverallow ... self:capability sys_ptrace
+# 均为不可破的安全边界。功能替代：
+#   net_raw/net_admin → 普通 TCP/UDP 套接字已足够（第一节）
+#   sys_nice          → 用 Process.setThreadPriority / cgroup 调度
+#   sys_ptrace        → CC loop 子进程用 fork/exec + waitpid，不需要 ptrace
+#   kill              → 对自身子进程发信号不需要 capability
+#   dac_override/dac_read_search → 截图写应用私有目录，或经 MediaStore 落盘
+# allow anzhi_app self:capability {
+#     net_raw          # 网络原始套接字
+#     net_admin        # 网络管理（WebSocket 保活）
+#     sys_nice         # 设置进程优先级
+#     sys_ptrace       # CC agent loop 子进程管理
+#     kill             # 杀子进程（cc command timeout destroyForcibly）
+#     dac_override     # 覆盖文件权限检查（sdcard 截图）
+#     dac_read_search  # 读取搜索权限
+# };
 
 # =============================================================================
 # 十四、属性（property）权限
@@ -325,7 +359,8 @@ allow anzhi_app self:capability {
 # SELinux 模式读取
 # getenforce / setenforce（仅开发阶段）
 # 正式阶段不设 setenforce
-allow anzhi_app security_policy_service:service_manager find;
+# [anzhi-build-fix] security_policy_service type removed in Android 16
+# allow anzhi_app security_policy_service:service_manager find;
 
 # =============================================================================
 # 十五、Neverallow 规则（安全边界，不可破）
@@ -335,7 +370,15 @@ allow anzhi_app security_policy_service:service_manager find;
 neverallow { domain -anzhi_app -system_server } anzhi_service:service_manager add;
 
 # 禁止非 anzhi_app 的进程写入 anzhi 数据文件
-neverallow { domain -anzhi_app -system_server -init } anzhi_data_file:file {
+# [anzhi-build-fix] 排除平台允许的写入者：
+#   vendor_init —— vendor_init.te:123 允许写所有 file_type
+#   installd / artd / dumpstate —— anzhi_data_file 带 app_data_file_type 属性后，
+#     AOSP 规则允许它们写应用数据（安装、dexopt、bugreport）
+neverallow {
+    domain
+    -anzhi_app -system_server -init -vendor_init
+    -installd -artd -dumpstate
+} anzhi_data_file:file {
     write append create
 };
 
@@ -344,7 +387,8 @@ neverallow domain anzhi_data_file:file execute;
 neverallow domain anzhi_data_file:file execute_no_trans;
 
 # 禁止非 anzhi_app 的进程写入 anzhi 调试文件
-neverallow { domain -anzhi_app -system_server -init } anzhi_debug_file:file {
+# [anzhi-build-fix] 同上，排除 vendor_init
+neverallow { domain -anzhi_app -system_server -init -vendor_init } anzhi_debug_file:file {
     write append create
 };
 
@@ -357,37 +401,45 @@ neverallow anzhi_webview anzhi_data_file:file { write append create unlink };
 # =============================================================================
 
 # ── 类型声明 ──
-type anzhi_core_service, system_api_service, service_manager_type;
-type anzhi_core_app, appdomain;
+# [anzhi-build-fix] 补 app_api_service（同 anzhi_service，见 domain.te:932）
+type anzhi_core_service, app_api_service, system_api_service, service_manager_type;
+# [anzhi-build-fix] 必须显式声明 domain（同 anzhi_app，见第一节类型声明处说明）；
+# appdomain 属性保留，两者语义不同
+type anzhi_core_app, domain, appdomain;
 
 # anzhi_app 可以找到 anzhi_core_service
 allow anzhi_app anzhi_core_service:service_manager find;
 
 # anzhi_core_app 权限
-allow anzhi_core_app self:capability { net_raw net_admin sys_nice sys_ptrace };
+# [anzhi-build-fix] capability 一律删除（app.te:545 / domain.te:2033,2043,1691）
+# allow anzhi_core_app self:capability { net_raw net_admin sys_nice sys_ptrace };
 allow anzhi_core_app self:udp_socket create_socket_perms;
 allow anzhi_core_app self:tcp_socket create_socket_perms;
 
 # AnzhiCoreService 用 SurfaceFlinger 截屏
 allow anzhi_core_app surfaceflinger_service:service_manager find;
-allow anzhi_core_app flinger:fd use;
-allow anzhi_core_app flinger:binder { call transfer };
+allow anzhi_core_app surfaceflinger:fd use;
+allow anzhi_core_app surfaceflinger:binder { call transfer };
 
 # AnzhiCoreService 用 InputFlinger 注入
 allow anzhi_core_app inputflinger:binder { call transfer };
 
 # AnzhiCoreService 读系统属性
-allow anzhi_core_app anzhi_prop:property_service set;
+allow anzhi_core_app vendor_anzhi_prop:property_service set;
 allow anzhi_core_app system_prop:property_service set;
-set_prop(anzhi_core_app, anzhi_prop);
+set_prop(anzhi_core_app, vendor_anzhi_prop);
 
 # AnzhiCoreService binder 通信
 binder_use(anzhi_core_app);
 binder_service(anzhi_core_app);
 allow anzhi_core_app servicemanager:binder { call };
-allow anzhi_core_app service_manager:service_manager { find add };
+# [anzhi-build-fix] service_manager { add find } 的目标必须是 service_manager_type
+# 的名字标签，servicemanager 是进程域（service.te:84 neverallow）。
+# 改为对自家服务类型注册/查找
+allow anzhi_core_app anzhi_core_service:service_manager { add find };
 allow anzhi_core_app appdomain:binder { call transfer };
-allow appdomain anzhi_core_service:service_manager find;
+# [anzhi-build-fix] 同 5.1：排除 isolated 域（isolated_app_all.te:72）
+allow { appdomain -isolated_app -isolated_compute_app } anzhi_core_service:service_manager find;
 allow appdomain anzhi_core_app:binder { call transfer };
 
 # AnzhiCoreService 写临时文件

@@ -16,6 +16,7 @@ import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
 import com.anzhi.os.AnzhiAuditLog
+import com.anzhi.os.AnzhiManagerService
 import com.anzhi.os.AnzhiSessionStore
 import com.anzhi.os.AnzhiSocket
 import com.anzhi.os.action.ActionExecutor
@@ -50,7 +51,7 @@ class AnzhiChatActivity : ComponentActivity() {
     companion object {
         private const val TAG = "AnzhiChatActivity"
 
-        // VPS WebSocket 地址默认值（SystemProperties persist.anzhi.server_url 未设置时兜底）
+        // VPS WebSocket 地址默认值（SystemProperties persist.vendor.anzhi.server_url 未设置时兜底）
         private const val VPS_WS_URL_DEFAULT = "ws://your-vps-ip:8080/anzhi"
 
         fun launch(context: Context, sessionId: String? = null) {
@@ -147,6 +148,10 @@ class AnzhiChatActivity : ComponentActivity() {
                     onSwitchSession = this::onSwitchSession,
                     onNewSession = this::onNewSession,
                     onToggleSidebar = { toggleSidebar() },
+                    onOpenSettings = {
+                        startActivity(android.content.Intent(this,
+                            com.anzhi.os.ui.settings.VpsSettingsActivity::class.java))
+                    },
                     onClose = { finish() }
                 )
             }
@@ -186,19 +191,31 @@ class AnzhiChatActivity : ComponentActivity() {
         sessionStore = AnzhiSessionStore(this)
         auditLog = AnzhiAuditLog(this)
 
-        // VPS WebSocket 地址：SystemProperties 优先（persist.anzhi.server_url），未设置用默认
-        val wsUrl = SystemProperties.get("persist.anzhi.server_url", VPS_WS_URL_DEFAULT)
+        // WS 地址优先级与 AnzhiManagerService.connectToServer 一致：属性 > 旧 SharedPreferences > 占位默认
+        val wsUrl = SystemProperties.get("persist.vendor.anzhi.server_url", "")
+            .ifBlank {
+                getSharedPreferences("anzhi_config", MODE_PRIVATE)
+                    .getString("anzhi_server_url", "").orEmpty()
+            }
+            .ifBlank { VPS_WS_URL_DEFAULT }
+
         socket = AnzhiSocket(wsUrl, deviceId).also { s ->
             s.statusCallback = { status ->
                 Log.i(TAG, "WS 状态: $status")
-                if (status == "disconnected") {
+                // 回调跑在 OkHttp 线程上，可能早于 initChatSession 赋值，lateinit 未初始化会崩整个进程
+                if (status == "disconnected" && this::chatSession.isInitialized) {
                     chatSession.onStateChanged?.invoke(
                         AnzhiChatSession.ChatState.DISCONNECTED
                     )
                 }
             }
         }
-        socket.connect()
+
+        if (wsUrl.contains("your-vps-ip")) {
+            Log.i(TAG, "WebSocket 旧链路未配置（占位地址 $wsUrl）——跳过连接，聊天走 VPS /proxy_chat")
+        } else {
+            socket.connect()
+        }
     }
 
     private fun initCdp() {
@@ -206,9 +223,12 @@ class AnzhiChatActivity : ComponentActivity() {
         val cdpProvider = GeminiCdpWebProvider(webViewManager)
         this.cdpProvider = cdpProvider
 
-        // VPS 直连大脑配置：SystemProperties 读取（persist.anzhi.api_url / persist.anzhi.token），缺省为空
-        val vpsApiUrl = SystemProperties.get("persist.anzhi.api_url", "")
-        val apiToken = SystemProperties.get("persist.anzhi.token", "")
+        // VPS 直连大脑配置：界面填的值优先，系统属性只做开发期兜底
+        val vpsApiUrl = com.anzhi.os.VpsConfig.apiUrl(this)
+        val apiToken = com.anzhi.os.VpsConfig.apiToken(this)
+        if (apiToken.isBlank()) {
+            Log.w(TAG, "VPS 接口令牌为空：聊天将退回本地/备用模式，去 设置 → VPS 接入 填写")
+        }
 
         // M2：手机 DS 执行器——VPS 返回工具调用（action/launch_app/speak/pop_content/screenshot）
         // 手机执行 → 结果回传 VPS 续轮，直到拿到最终文本。onSpeak 接聊天界面渲染路径。
@@ -261,7 +281,13 @@ class AnzhiChatActivity : ComponentActivity() {
         webViewManager.bindService()
 
         // 监听 CAPTCHA 解盾完成广播（CaptchaActivity 同包名作用域发送），重置 CDP 状态
-        registerReceiver(captchaResolvedReceiver, IntentFilter("com.anzhi.os.CAPTCHA_RESOLVED"))
+        // targetSdk 34+：自定义动作的接收器必须显式声明导出性，否则 registerReceiver 抛
+        // SecurityException（"One of RECEIVER_EXPORTED or RECEIVER_NOT_EXPORTED…"），整页起不来。
+        registerReceiver(
+            captchaResolvedReceiver,
+            IntentFilter("com.anzhi.os.CAPTCHA_RESOLVED"),
+            Context.RECEIVER_NOT_EXPORTED
+        )
     }
 
     private fun initChatSession(sessionId: String?) {
@@ -320,6 +346,9 @@ class AnzhiChatActivity : ComponentActivity() {
 
         // 清空输入
         _chatState.update { s -> s.copy(inputText = "") }
+
+        // 沉默计时从"Cami 最后跟安知聊天"重新起算（README §九）
+        AnzhiManagerService.feedCamiChatted()
 
         Log.d(TAG, "发送消息: ${text.take(50)}...")
 

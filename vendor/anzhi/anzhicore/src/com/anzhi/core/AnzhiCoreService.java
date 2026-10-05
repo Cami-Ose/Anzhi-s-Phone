@@ -7,9 +7,11 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Point;
+import android.hardware.HardwareBuffer;
 import android.hardware.input.InputManager;
 import android.os.Binder;
 import android.os.IBinder;
+import android.os.OutcomeReceiver;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 import android.os.ServiceManager;
@@ -21,57 +23,111 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.SurfaceControl;
 import android.view.WindowManager;
+import android.window.ScreenCapture;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class AnzhiCoreService extends Service {
 
     private static final String TAG = "AnzhiCore";
 
+    // 截屏是 binder 线程上同步等的跨进程回调，超过这个时间就当它拿不到
+    private static final long CAPTURE_TIMEOUT_MS = 2_000L;
+    private static final int CAPTURE_JPEG_QUALITY = 85;
+
     private final IBinder mBinder = new IAnzhiCoreService.Stub() {
 
         @Override
         public ParcelFileDescriptor captureScreen(int displayId) {
+            // BP4A 把 app 侧取 display token 的接口整条删掉了（SurfaceControl.getInternalDisplayToken /
+            // getPhysicalDisplayToken 在 frameworks/base/core/java/android/** 里已 0 命中），此路编不过。
+            // 现走 IWindowManager.screenCapture：oneway + IScreenCaptureCallback，
+            // WMS 侧闸门只有 READ_FRAME_BUFFER（WindowManagerService.screenCapture() 开头），
+            // display token 由 system_server 内部补全。
+            final ScreenCapture.ScreenCaptureResult[] holder =
+                    new ScreenCapture.ScreenCaptureResult[1];
+            final Exception[] failure = new Exception[1];
+            final CountDownLatch latch = new CountDownLatch(1);
+
+            // Builder 默认策略是 REDACT（把 secure/protected 窗涂黑）。这里要的是明确失败，
+            // 不是给调用方一张"看起来像黑屏"的假图 —— 假图会让安知以为屏幕真的是黑的。
+            ScreenCapture.ScreenCaptureParams params =
+                    new ScreenCapture.ScreenCaptureParams.Builder(displayId)
+                            .setSecureContentPolicy(ScreenCapture.ScreenCaptureParams
+                                    .SECURE_CONTENT_POLICY_THROW_EXCEPTION)
+                            .setProtectedContentPolicy(ScreenCapture.ScreenCaptureParams
+                                    .PROTECTED_CONTENT_POLICY_THROW_EXCEPTION)
+                            .setIncludeSystemOverlays(true)
+                            .build();
+
+            ScreenCapture.capture(params, Runnable::run,
+                    new OutcomeReceiver<ScreenCapture.ScreenCaptureResult, Exception>() {
+                        @Override
+                        public void onResult(ScreenCapture.ScreenCaptureResult result) {
+                            holder[0] = result;
+                            latch.countDown();
+                        }
+
+                        @Override
+                        public void onError(Exception e) {
+                            failure[0] = e;
+                            latch.countDown();
+                        }
+                    });
+
             try {
-                IBinder displayToken;
-                if (displayId == 0) {
-                    displayToken = SurfaceControl.getInternalDisplayToken();
-                } else {
-                    displayToken = SurfaceControl.getPhysicalDisplayToken(displayId);
-                }
-                if (displayToken == null) {
-                    Log.e(TAG, "captureScreen: displayToken null for display " + displayId);
+                if (!latch.await(CAPTURE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                    Log.e(TAG, "captureScreen: 超时未回调, displayId=" + displayId);
                     return null;
                 }
-                int width = getDisplayWidth();
-                int height = getDisplayHeight();
-                SurfaceControl.DisplayCaptureArgs captureArgs =
-                        new SurfaceControl.DisplayCaptureArgs.Builder(displayToken)
-                                .setSize(width, height)
-                                .build();
-                SurfaceControl.ScreenshotHardwareBuffer buffer =
-                        SurfaceControl.captureDisplay(captureArgs);
-                if (buffer == null) {
-                    Log.e(TAG, "captureScreen: buffer is null");
-                    return null;
-                }
-                Bitmap bitmap = buffer.asBitmap();
-                if (bitmap == null) {
-                    Log.e(TAG, "captureScreen: bitmap is null");
-                    return null;
-                }
-                File tmpFile = new File(getCacheDir(),
-                        "screenshot_" + System.nanoTime() + ".png");
-                try (FileOutputStream out = new FileOutputStream(tmpFile)) {
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
-                }
-                return ParcelFileDescriptor.open(tmpFile,
-                        ParcelFileDescriptor.MODE_READ_ONLY);
-            } catch (Exception e) {
-                Log.e(TAG, "captureScreen failed", e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                Log.e(TAG, "captureScreen: 等待被中断", e);
                 return null;
+            }
+
+            if (failure[0] != null) {
+                // 银行/密码这类带 secure 窗的页面会走到这里（SENSITIVE_CONTENT），是预期结果
+                Log.w(TAG, "captureScreen: 系统拒绝, displayId=" + displayId
+                        + " → " + failure[0].getMessage());
+                return null;
+            }
+
+            ScreenCapture.ScreenCaptureResult result = holder[0];
+            HardwareBuffer buffer = result.getHardwareBuffer();
+            Bitmap hardwareBmp = null;
+            Bitmap softwareBmp = null;
+            ParcelFileDescriptor pfd = null;
+            long startedAt = SystemClock.uptimeMillis();
+            try {
+                hardwareBmp = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
+                // 硬位图不能直接 compress()，必须落到 CPU 内存这一份
+                softwareBmp = hardwareBmp.copy(Bitmap.Config.ARGB_8888, false);
+
+                File tmp = File.createTempFile("anzhi_shot", ".jpg", getCacheDir());
+                try (FileOutputStream out = new FileOutputStream(tmp)) {
+                    softwareBmp.compress(Bitmap.CompressFormat.JPEG, CAPTURE_JPEG_QUALITY, out);
+                }
+                long bytes = tmp.length();
+                pfd = ParcelFileDescriptor.open(tmp, ParcelFileDescriptor.MODE_READ_ONLY);
+                // 目录项立刻删：fd 仍然可读，最后一个 close 之后 inode 自动回收，
+                // cacheDir 里不会攒出截图垃圾
+                tmp.delete();
+                Log.i(TAG, "captureScreen: ok displayId=" + displayId + " "
+                        + softwareBmp.getWidth() + "x" + softwareBmp.getHeight()
+                        + " " + bytes + "B 用 " + (SystemClock.uptimeMillis() - startedAt) + "ms");
+                return pfd;
+            } catch (Exception e) {
+                Log.e(TAG, "captureScreen: 编码/落盘失败", e);
+                return null;
+            } finally {
+                if (softwareBmp != null) softwareBmp.recycle();
+                if (hardwareBmp != null) hardwareBmp.recycle();
+                if (buffer != null) buffer.close();
             }
         }
 
@@ -82,7 +138,7 @@ public class AnzhiCoreService extends Service {
                 MotionEvent event = MotionEvent.obtain(
                         downTime, downTime, action, x, y, 0);
                 event.setDisplayId(displayId);
-                return InputManager.getInstance().injectInputEvent(event,
+                return getSystemService(InputManager.class).injectInputEvent(event,
                         InputManager.INJECT_INPUT_EVENT_MODE_ASYNC);
             } catch (Exception e) {
                 Log.e(TAG, "injectInputEvent failed", e);
@@ -97,7 +153,7 @@ public class AnzhiCoreService extends Service {
                 KeyEvent event = new KeyEvent(downTime, downTime,
                         down ? KeyEvent.ACTION_DOWN : KeyEvent.ACTION_UP,
                         keyCode, 0);
-                return InputManager.getInstance().injectInputEvent(event,
+                return getSystemService(InputManager.class).injectInputEvent(event,
                         InputManager.INJECT_INPUT_EVENT_MODE_ASYNC);
             } catch (Exception e) {
                 Log.e(TAG, "injectKeyEvent failed", e);
@@ -128,7 +184,7 @@ public class AnzhiCoreService extends Service {
                         downTime, downTime,
                         MotionEvent.ACTION_DOWN, 1, props, coords,
                         0, 0, 1, 1, 0, 0, 0, 0);
-                InputManager.getInstance().injectInputEvent(down,
+                getSystemService(InputManager.class).injectInputEvent(down,
                         InputManager.INJECT_INPUT_EVENT_MODE_ASYNC);
 
                 // ACTION_MOVE interpolated
@@ -141,7 +197,7 @@ public class AnzhiCoreService extends Service {
                             downTime, now,
                             MotionEvent.ACTION_MOVE, 1, props, coords,
                             0, 0, 1, 1, 0, 0, 0, 0);
-                    InputManager.getInstance().injectInputEvent(move,
+                    getSystemService(InputManager.class).injectInputEvent(move,
                             InputManager.INJECT_INPUT_EVENT_MODE_ASYNC);
                     try {
                         Thread.sleep(10);
@@ -157,7 +213,7 @@ public class AnzhiCoreService extends Service {
                         downTime, downTime + durationMs,
                         MotionEvent.ACTION_UP, 1, props, coords,
                         0, 0, 1, 1, 0, 0, 0, 0);
-                return InputManager.getInstance().injectInputEvent(up,
+                return getSystemService(InputManager.class).injectInputEvent(up,
                         InputManager.INJECT_INPUT_EVENT_MODE_ASYNC);
             } catch (Exception e) {
                 Log.e(TAG, "injectSwipe failed", e);
@@ -208,10 +264,13 @@ public class AnzhiCoreService extends Service {
         public boolean moveTaskToDisplay(int taskId, int displayId) {
             try {
                 ActivityTaskManager.getService()
-                        .moveTaskToDisplay(taskId, displayId);
+                        .moveRootTaskToDisplay(taskId, displayId);
                 return true;
             } catch (RemoteException e) {
                 Log.e(TAG, "moveTaskToDisplay failed", e);
+                return false;
+            } catch (SecurityException e) {
+                Log.e(TAG, "moveTaskToDisplay denied (needs INTERNAL_SYSTEM_WINDOW)", e);
                 return false;
             }
         }
@@ -229,7 +288,8 @@ public class AnzhiCoreService extends Service {
         @Override
         public int[] getRunningTasks(int maxCount, int displayId) {
             try {
-                var tasks = ActivityTaskManager.getService().getTasks(maxCount, 0);
+                var tasks = ActivityTaskManager.getService()
+                        .getTasks(maxCount, false, false, Display.INVALID_DISPLAY);
                 int[] taskIds = new int[tasks.size()];
                 for (int i = 0; i < tasks.size(); i++) {
                     taskIds[i] = tasks.get(i).taskId;
@@ -245,7 +305,7 @@ public class AnzhiCoreService extends Service {
         public boolean moveTaskToFront(int taskId) {
             try {
                 ActivityTaskManager.getService()
-                        .moveTaskToFront(taskId, 0, null);
+                        .moveTaskToFront(null, getPackageName(), taskId, 0, null);
                 return true;
             } catch (RemoteException e) {
                 Log.e(TAG, "moveTaskToFront failed", e);
@@ -260,8 +320,19 @@ public class AnzhiCoreService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        ServiceManager.addService("anzhi_core", mBinder);
-        Log.i(TAG, "AnzhiCoreService registered as 'anzhi_core'");
+        // addService 需要 servicemanager 的 add 权，本进程跑在普通 app uid 上拿不到
+        // （platform 签名只解决"权限给不给"，不解决 servicemanager 的 SELinux add 约束）。
+        // 实机证据：这一行不加 try 时，onCreate 抛出 → 进程崩 → ActivityManager 每 1000ms
+        // 重启一次服务、`service list` 永远查不到 anzhi_core，整晚空转烧 CPU。
+        // 所以注册失败必须只是"记一笔"，不能带走整个进程：调用方（AnzhiManagerService）
+        // 走 bindService，onBind 返回的就是同一个 mBinder，那条路不受 uid 限制。
+        try {
+            ServiceManager.addService("anzhi_core", mBinder);
+            Log.i(TAG, "AnzhiCoreService registered as 'anzhi_core'");
+        } catch (Throwable t) {
+            Log.w(TAG, "addService('anzhi_core') failed (expected for an app uid) - "
+                    + "callers use the bindService IBinder instead: " + t);
+        }
     }
 
     @Override

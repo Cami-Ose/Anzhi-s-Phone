@@ -26,6 +26,7 @@ import java.util.*
  * @param onSwitchSession 切换到指定会话
  * @param onNewSession 新建会话
  * @param onClose 关闭侧栏
+ * @param onOpenSettings 打开 VPS 接入设置
  * @param onSearchMemory 搜索记忆（预留）
  */
 @Composable
@@ -35,6 +36,7 @@ fun ChatSidebar(
     onSwitchSession: (String) -> Unit = {},
     onNewSession: () -> Unit = {},
     onClose: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     onSearchMemory: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -71,6 +73,18 @@ fun ChatSidebar(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null
                             ) { onNewSession() }
+                            .padding(4.dp)
+                    )
+                    Text(
+                        text = "接入",
+                        style = AnzhiTypography.bodySmall,
+                        color = AnzhiTextSecondary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) { onOpenSettings() }
                             .padding(4.dp)
                     )
                     Text(

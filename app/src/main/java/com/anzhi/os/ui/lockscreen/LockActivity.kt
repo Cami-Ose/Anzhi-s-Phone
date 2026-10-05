@@ -1,6 +1,7 @@
 package com.anzhi.os.ui.lockscreen
 
 import androidx.activity.ComponentActivity
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -68,6 +69,9 @@ class LockActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Log.i(TAG, "安知锁屏启动")
 
+        // 亮屏第一眼就是这一屏：窗口盖在系统锁屏之上显示
+        setShowWhenLocked(true)
+
         // 全屏覆盖（覆盖系统锁屏/梦境的显示区域）
         window.setFlags(
             WindowManager.LayoutParams.FLAG_FULLSCREEN
@@ -113,6 +117,9 @@ class LockActivity : ComponentActivity() {
     private fun unlock() {
         Log.i(TAG, "解锁 → 启动仪表盘")
         lockScreenBridge.clearPersistentMessage()
+        // 系统锁屏还在底下，先收掉，免得仪表盘被它盖住
+        (getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager)
+            .requestDismissKeyguard(this, null)
         AnzhiDashboardActivity.launch(this)
         finish()
     }

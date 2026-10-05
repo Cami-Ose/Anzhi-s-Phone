@@ -1,7 +1,10 @@
 package com.anzhi.os.cdp
 
 import android.content.Context
+import android.os.ParcelFileDescriptor
 import android.util.Log
+import android.view.Display
+import com.anzhi.os.AnzhiManagerService
 import com.anzhi.os.action.ActionExecutor
 import com.anzhi.os.action.AnzhiAction
 import kotlinx.coroutines.CancellationException
@@ -32,8 +35,12 @@ class DsExecutor(
 ) {
     companion object {
         private const val TAG = "DsExecutor"
-        /** 截图 base64 回传上限（约 200KB），超长截断并加标注 */
-        private const val MAX_SCREENSHOT_B64_CHARS = 200_000
+        /**
+         * 截图 base64 回传上限。1080x2400 的 JPEG(q85) base64 约 30-50 万字符，
+         * 旧的 20 万会把图片截断成一堆不可用的数据；VPS 侧对 tool_result 的大小限制**还没实测**，
+         * 这里只是先保证手机端不主动毁图。
+         */
+        private const val MAX_SCREENSHOT_B64_CHARS = 1_200_000
         /** screencap 等待上限（秒） */
         private const val SCREENSHOT_TIMEOUT_SEC = 30L
     }
@@ -156,6 +163,10 @@ class DsExecutor(
      * 返回 "ok: <base64前N字符>" 或 "ERROR: ..."。
      */
     private suspend fun executeScreenshotTool(): String {
+        // P4 正门：AnzhiCore 的免同意截屏（系统侧只查 READ_FRAME_BUFFER，不问用户）。
+        // 拿不到（服务没绑上 / 屏上有 secure 窗 / 返回 null）才退回下面的 screencap 兜底。
+        coreCapture()?.let { return it }
+
         val candidates = mutableListOf<File>()
         val cacheDir = context.cacheDir
         if (cacheDir != null) {
@@ -188,18 +199,41 @@ class DsExecutor(
             }
 
             val file = created ?: return "ERROR: screencap 未生成截图文件"
-            val b64 = android.util.Base64.encodeToString(file.readBytes(), android.util.Base64.NO_WRAP)
-            val capped = if (b64.length > MAX_SCREENSHOT_B64_CHARS) {
-                b64.substring(0, MAX_SCREENSHOT_B64_CHARS) +
-                    "…(truncated ${b64.length - MAX_SCREENSHOT_B64_CHARS} chars)"
-            } else b64
-            Log.d(TAG, "截图成功: ${file.length()} bytes, b64=${b64.length} chars")
-            return "ok: $capped"
+            val bytes = file.readBytes()
+            Log.d(TAG, "screencap 截图成功: ${bytes.size} bytes")
+            return "ok: ${encodeCapped(bytes)}"
         } catch (e: Exception) {
             Log.e(TAG, "截图失败: ${e.message}")
             return "ERROR: ${e.message ?: "screencap 失败"}"
         } finally {
             try { created?.delete() } catch (_: Exception) {}
         }
+    }
+
+    /**
+     * 走 AnzhiCore 截屏。成功返回 "ok: <base64>"；任何一步不可用返回 null，调用方退回兜底。
+     */
+    private fun coreCapture(): String? = try {
+        val pfd = AnzhiManagerService.coreProxy?.captureScreen(Display.DEFAULT_DISPLAY)
+        val bytes = pfd?.let { ParcelFileDescriptor.AutoCloseInputStream(it).use { s -> s.readBytes() } }
+        if (bytes == null || bytes.isEmpty()) {
+            Log.w(TAG, "AnzhiCore 截图不可用，退回 screencap")
+            null
+        } else {
+            Log.d(TAG, "AnzhiCore 截图成功: ${bytes.size} bytes")
+            "ok: ${encodeCapped(bytes)}"
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "AnzhiCore 截图异常，退回 screencap: ${e.message}")
+        null
+    }
+
+    /** 截图字节 → base64，超过回传上限就截断并标注剩余长度 */
+    private fun encodeCapped(bytes: ByteArray): String {
+        val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        return if (b64.length > MAX_SCREENSHOT_B64_CHARS) {
+            b64.substring(0, MAX_SCREENSHOT_B64_CHARS) +
+                "…(truncated ${b64.length - MAX_SCREENSHOT_B64_CHARS} chars)"
+        } else b64
     }
 }

@@ -11,6 +11,7 @@ import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 import com.anzhi.os.ActionTransactionLock
+import com.anzhi.os.AnzhiManagerService
 import android.anzhi.IAnzhiCoreService
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
@@ -48,16 +49,21 @@ class ActionExecutor(
     // 核心后端
     // ═══════════════════════════════════════════
 
-    /** AnzhiCoreService AIDL 代理（优先路径） */
-    private val coreService: IAnzhiCoreService? by lazy {
-        try {
-            val binder = ServiceManager.getService("anzhi_core")
-            if (binder != null) IAnzhiCoreService.Stub.asInterface(binder) else null
+    /**
+     * AnzhiCoreService AIDL 代理（优先路径）。
+     *
+     * 先读 AnzhiManagerService  bind 到手的那份；没有才退回查 ServiceManager。
+     * 不能写成 `by lazy`：lazy 会把"构造那一刻还没连上"的 null 永久缓存下来，
+     * 而 bind 是异步的、通常在 ActionExecutor 之后才回调，结果明明连上了一辈子都用不到。
+     */
+    private val coreService: IAnzhiCoreService?
+        get() = AnzhiManagerService.coreProxy ?: try {
+            ServiceManager.getService("anzhi_core")
+                ?.let { IAnzhiCoreService.Stub.asInterface(it) }
         } catch (e: Exception) {
             Log.w(TAG, "AnzhiCoreService 不可用: ${e.message}")
             null
         }
-    }
 
     /** InputManager 隐藏 API 备用（需 platform_apis） */
     private val inputManager: InputManager by lazy {

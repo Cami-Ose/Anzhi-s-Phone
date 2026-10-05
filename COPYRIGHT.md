@@ -11,7 +11,6 @@ Main original areas:
 
 - `backend/`
 - `device/`
-- `default-permissions/`
 - `local_manifests/`
 - `sepolicy/`
 - `vendor/anzhi/`
@@ -46,7 +45,6 @@ The following areas contain Anzhi's Phone visual design or visual assets by Cami
 
 - `app/src/main/assets/chat.html`
 - `app/src/main/assets/dashboard.html`
-- `app/src/main/assets/fusion-pixel.otf`
 - `app/src/main/java/com/anzhi/os/ui/`
 - `app/src/main/java/com/anzhi/os/chat/`
 - `app/src/main/java/com/anzhi/os/dashboard/`
@@ -54,6 +52,14 @@ The following areas contain Anzhi's Phone visual design or visual assets by Cami
 - visual portions of `app/src/main/res/`
 
 These materials are covered by `LICENSE-DESIGN.md`. Functional code embedded in a visual file remains subject to the applicable code/source notice, but the visual arrangement, styling, artwork, and assets remain reserved.
+
+## Third-party fonts
+
+`app/src/main/assets/fusion-pixel.otf` and `app/src/main/res/font/fusion-pixel.otf` are the **Fusion Pixel Font** by TakWolf (https://takwolf.com), Copyright (c) 2022 TakWolf.
+
+They are used unmodified and are licensed under the **SIL Open Font License, Version 1.1**; the license text is included at `third-party/OFL-1.1.txt`. The name "Fusion Pixel" is a Reserved Font Name under that license.
+
+These font files are third-party material. They are not covered by `LICENSE-DESIGN.md`, and the reservation of rights in that notice does not apply to them.
 
 ## Brand
 

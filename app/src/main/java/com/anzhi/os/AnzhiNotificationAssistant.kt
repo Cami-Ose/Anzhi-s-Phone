@@ -522,7 +522,7 @@ class AnzhiNotificationAssistant : NotificationAssistantService() {
      */
     private fun getDeepSeekApiKey(): String? {
         // 1. 尝试读取 Android 系统属性（需 platform_apis）
-        val key = SystemProperties.get("persist.anzhi.deepseek_api_key", "")
+        val key = SystemProperties.get("persist.vendor.anzhi.deepseek_api_key", "")
         if (key.isNotBlank()) return key
 
         // 2. 尝试从 SharedPreferences 读取（开发阶段手动配置）
@@ -592,9 +592,6 @@ private class NotificationCacheDb(context: Context) : SQLiteOpenHelper(
     }
 
     override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL("PRAGMA journal_mode=WAL")       // 陷阱 18：读写不互斥
-        db.execSQL("PRAGMA busy_timeout=5000")
-
         db.execSQL("""
             CREATE TABLE notification_rules (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -616,6 +613,16 @@ private class NotificationCacheDb(context: Context) : SQLiteOpenHelper(
         if (oldVersion < 2) {
             // 预留：未来新增字段在此处 ALTER TABLE ADD COLUMN
         }
+    }
+
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        // WAL 模式：读写不互斥（陷阱 18）
+        // PRAGMA 必须放在 onConfigure：onCreate 是 SQLiteOpenHelper 在事务里调的，
+        // 事务内改 journal_mode 会抛 "cannot change into wal mode from within a transaction"
+        // （10-05 实机抓到过：onNotificationEnqueued 每次都被这条异常打死）
+        db.rawQuery("PRAGMA journal_mode=WAL", null).use { it.moveToFirst() }
+        db.rawQuery("PRAGMA busy_timeout=5000", null).use { it.moveToFirst() }
     }
 
     /**

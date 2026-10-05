@@ -1,7 +1,8 @@
 package android.anzhi;
 
 interface IAnzhiCoreService {
-    /** Capture screenshot of the given display. Returns file descriptor to a temporary PNG file. */
+    /** Capture screenshot of the given display. Returns file descriptor to a temporary JPEG file,
+     *  or null when the system refuses (secure/protected windows, missing READ_FRAME_BUFFER). */
     ParcelFileDescriptor captureScreen(int displayId);
 
     /** Inject a motion event (ACTION_DOWN, ACTION_MOVE, ACTION_UP) at (x,y) on displayId. */

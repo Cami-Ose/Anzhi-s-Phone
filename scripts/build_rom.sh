@@ -11,7 +11,7 @@
 #   ./scripts/build_rom.sh --verify     # 仅验证编译环境
 #
 # 前提条件（BUILD.md §六）：
-#   1. WSL2 Ubuntu，源码在 $HOME/lineageos/
+#   1. WSL2 Ubuntu 26.04，源码在 /home/<user>/lineageos/
 #   2. 已执行 repo init + repo sync
 #   3. 已配置 local_manifests/anzhi.xml
 #   4. 已复制安知源码到 AOSP 树
@@ -26,7 +26,11 @@ set -euo pipefail
 
 # ── 配置 ────────────────────────────────────────────────
 LINEAGE_ROOT="${LINEAGE_ROOT:-$HOME/lineageos}"
-ANZHI_SRC="${ANZHI_SRC:-/mnt/e/Anzhi's Phone}"   # WSL 下 Windows E 盘路径（项目已从 C: 搬到 E:）
+if [ -z "${ANZHI_SRC:-}" ]; then
+    # 目录名里的撇号无法写进 ${VAR:-默认值}（bash 会当成引号起始），改用通配解析
+    ANZHI_SRC=$(ls -d /mnt/*/Anzhi*Phone 2>/dev/null | head -1 || true)
+fi
+: "${ANZHI_SRC:?未找到源码目录，请 export ANZHI_SRC=/path/to/repo}"
 BUILD_LOG="$LINEAGE_ROOT/build_anzhi.log"
 JOBS="${JOBS:-}"                             # 留空，由 verify_environment 自动检测
 
@@ -113,11 +117,11 @@ deploy_source() {
     cp "$ANZHI_SRC/sepolicy/property_contexts" "$SEPOLICY_DIR/" 2>/dev/null || warn "复制 sepolicy/property_contexts 失败"
     cp "$ANZHI_SRC/sepolicy/seapp_contexts" "$SEPOLICY_DIR/" 2>/dev/null || warn "复制 sepolicy/seapp_contexts 失败"
 
-    # 复制 Default Permissions
-    PERM_DIR="$LINEAGE_ROOT/vendor/anzhi/default-permissions"
+    # 复制 priv-app 特权权限 allowlist（源文件在 vendor/anzhi/ 下，随源码一起进树）
+    PERM_DIR="$LINEAGE_ROOT/vendor/anzhi/privapp-permissions"
     mkdir -p "$PERM_DIR"
-    info "  复制 default-permissions/anzhi_assistant_grant.xml → vendor/anzhi/default-permissions/"
-    cp "$ANZHI_SRC/default-permissions/anzhi_assistant_grant.xml" "$PERM_DIR/" 2>/dev/null || warn "复制 default-permissions 失败"
+    info "  复制 vendor/anzhi/privapp-permissions/ → vendor/anzhi/privapp-permissions/"
+    cp "$ANZHI_SRC/vendor/anzhi/privapp-permissions/"*.xml "$PERM_DIR/" 2>/dev/null || warn "复制 privapp-permissions 失败"
 
     # 复制 vendor/Android.mk
     info "  复制 vendor/Android.mk"
@@ -133,41 +137,71 @@ deploy_source() {
     info "  复制 sepolicy/service_contexts → vendor/anzhi/sepolicy/"
     cp "$ANZHI_SRC/sepolicy/service_contexts" "$SEPOLICY_DIR/" 2>/dev/null || warn "复制 service_contexts 失败"
 
-    # 复制 device tree 覆盖
-    DEVICE_DIR="$LINEAGE_ROOT/device/google/bluejay"
-    info "  复制 device/bluejay/* → device/google/bluejay/"
-    cp "$ANZHI_SRC/device/bluejay/BoardConfig.mk" "$DEVICE_DIR/BoardConfig_anzhi.mk" 2>/dev/null || true
-    cp "$ANZHI_SRC/device/bluejay/device.mk" "$DEVICE_DIR/device_anzhi.mk" 2>/dev/null || true
+    # ── 产品配置：生效路径是 device/anzhi/bluejay/（lineage_bluejay.mk 末尾 inherit 它）
+    #    device/google/bluejay/ 下没有上游 device.mk，把配置放那儿永远不会被读到 ──
+    ANZHI_DEVICE_DIR="$LINEAGE_ROOT/device/anzhi/bluejay"
+    mkdir -p "$ANZHI_DEVICE_DIR"
+    info "  复制 device/bluejay/device.mk → device/anzhi/bluejay/device.mk"
+    cp "$ANZHI_SRC/device/bluejay/device.mk" "$ANZHI_DEVICE_DIR/device.mk" || warn "复制 device.mk 失败"
 
-    # 注册 _anzhi.mk 到主 BoardConfig.mk（幂等：grep 检测到已有 include 则跳过）
-    if [ -f "$DEVICE_DIR/BoardConfig.mk" ] && ! grep -q "include.*BoardConfig_anzhi.mk" "$DEVICE_DIR/BoardConfig.mk" 2>/dev/null; then
+    # VPS 地址与接口令牌**不进 ROM**（2026-10-03 Cami 定的）：令牌一旦落到
+    # /system/build.prop 就是任何 app `getprop` 可读的明文，而且她换服务器就得重编一次。
+    # 改由应用内设置界面填写、存 app 私有 SharedPreferences；device.mk 里只保留
+    # persist.anzhi.api_url 作为出厂默认地址（非机密，可被界面覆盖）。
+
+    OVERLAY_DIR="$ANZHI_DEVICE_DIR/overlay/frameworks/base/core/res/res/values"
+    mkdir -p "$OVERLAY_DIR"
+    info "  复制 overlay config.xml → device/anzhi/bluejay/overlay/（DEVICE_PACKAGE_OVERLAYS 生效）"
+    cp "$ANZHI_SRC/device/bluejay/overlay/frameworks/base/core/res/res/values/config.xml" \
+       "$OVERLAY_DIR/" || warn "复制 overlay config.xml 失败"
+
+    # ── BoardConfig：真实入口在 device/google/bluejay/bluejay/BoardConfig.mk（gs101 分层）──
+    DEVICE_DIR="$LINEAGE_ROOT/device/google/bluejay"
+    BOARD_CFG="$DEVICE_DIR/bluejay/BoardConfig.mk"
+    if [ ! -f "$BOARD_CFG" ]; then
+        error "找不到 BoardConfig：$BOARD_CFG"
+    fi
+
+    info "  复制 device/bluejay/BoardConfig.mk → device/google/bluejay/BoardConfig_anzhi.mk"
+    cp "$ANZHI_SRC/device/bluejay/BoardConfig.mk" "$DEVICE_DIR/BoardConfig_anzhi.mk" 2>/dev/null || warn "复制 BoardConfig 失败"
+
+    # 幂等注册 include（只写一次）
+    if ! grep -q "include device/google/bluejay/BoardConfig_anzhi.mk" "$BOARD_CFG"; then
         {
             echo ""
-            echo "# Anzhi's Phone — 引入安知配置"
+            echo "# Anzhi's Phone"
             echo "include device/google/bluejay/BoardConfig_anzhi.mk"
-        } >> "$DEVICE_DIR/BoardConfig.mk"
-        info "  ✓ BoardConfig_anzhi.mk 已注册到 BoardConfig.mk"
+        } >> "$BOARD_CFG"
+        info "  ✓ BoardConfig_anzhi.mk 已注册到 bluejay/BoardConfig.mk"
     else
         info "  - BoardConfig_anzhi.mk 已注册，跳过"
     fi
 
-    # 注册 device_anzhi.mk 到主 device.mk（幂等）
-    if [ -f "$DEVICE_DIR/device.mk" ] && ! grep -q "include.*device_anzhi.mk" "$DEVICE_DIR/device.mk" 2>/dev/null; then
+    # 幂等注册 inherit-product（只写一次）
+    PRODUCT_CFG="$DEVICE_DIR/lineage_bluejay.mk"
+    if ! grep -q "inherit-product, device/anzhi/bluejay/device.mk" "$PRODUCT_CFG"; then
         {
             echo ""
-            echo "# Anzhi's Phone — 引入安知设备配置"
-            echo "include device/google/bluejay/device_anzhi.mk"
-        } >> "$DEVICE_DIR/device.mk"
-        info "  ✓ device_anzhi.mk 已注册到 device.mk"
+            echo "# Anzhi's Phone"
+            echo '$(call inherit-product, device/anzhi/bluejay/device.mk)'
+        } >> "$PRODUCT_CFG"
+        info "  ✓ device/anzhi/bluejay/device.mk 已注册到 lineage_bluejay.mk"
     else
-        info "  - device_anzhi.mk 已注册，跳过"
+        info "  - device/anzhi/bluejay/device.mk 已注册，跳过"
     fi
 
-    mkdir -p "$DEVICE_DIR/sepolicy"
-    cp "$ANZHI_SRC/device/bluejay/sepolicy/file_contexts" "$DEVICE_DIR/sepolicy/" 2>/dev/null || true
-    mkdir -p "$DEVICE_DIR/overlay/frameworks/base/core/res/res/values"
-    cp "$ANZHI_SRC/device/bluejay/overlay/frameworks/base/core/res/res/values/config.xml" \
-       "$DEVICE_DIR/overlay/frameworks/base/core/res/res/values/" 2>/dev/null || true
+    # ── 清走历次脚本写歪的孤儿文件（移出去，不删）──
+    STALE_DIR="$LINEAGE_ROOT/.anzhi-stale/$(date +%Y%m%d-%H%M%S)"
+    for stale in "$DEVICE_DIR/device.mk" "$DEVICE_DIR/device_anzhi.mk" "$DEVICE_DIR/test_include.txt" "$DEVICE_DIR/aosp_bluejax.mk" "$DEVICE_DIR/BoardConfig.mk"; do
+        [ -e "$stale" ] || continue
+        mkdir -p "$STALE_DIR"
+        mv "$stale" "$STALE_DIR/"
+        warn "  移走无关文件：$stale → $STALE_DIR"
+    done
+
+    # device/bluejay/sepolicy/file_contexts 暂不接入：它会把 /data/data/com.anzhi.os
+    # 改标成 anzhi_data_file，没有实机验证前可能造成安知起不来。
+    # 待 ROM 能开机、确认 anzhi_service.te 里的类型定义齐备后再连入 vendor/anzhi/sepolicy。
 
     # 复制 local_manifest
     MANIFEST_DIR="$LINEAGE_ROOT/.repo/local_manifests"
@@ -189,7 +223,11 @@ configure_selinux() {
 
     info "Step 2: SELinux 模式设置 → $mode"
 
-    BOARD_CFG="$LINEAGE_ROOT/device/google/bluejay/BoardConfig.mk"
+    BOARD_CFG="$LINEAGE_ROOT/device/google/bluejay/bluejay/BoardConfig.mk"
+
+    if [ ! -f "$BOARD_CFG" ]; then
+        error "找不到 BoardConfig：$BOARD_CFG"
+    fi
 
     if [ "$mode" == "permissive" ]; then
         # 开发阶段：Permissive
@@ -212,31 +250,32 @@ configure_selinux() {
 
 # ── 步骤 3：编译 ────────────────────────────────────────
 build_rom() {
-    local target="${1:-bacon}"
-    local clean_first="${2:-no}"
+    # 变量名必须带前缀：breakfast/junch 在同一个 shell 里跑，会给普通
+    # （非 local 作用域友好的）名字如 target 赋值，把我们的入参覆盖掉
+    local anzhi_target="${1:-bacon}"
+    local anzhi_clean="${2:-no}"
 
-    info "Step 3: 开始编译（target=$target, jobs=$JOBS）..."
+    info "Step 3: 开始编译（target=$anzhi_target, jobs=$JOBS）..."
     cd "$LINEAGE_ROOT"
 
+    # envsetup.sh 引用未定义的 TOP，breakfast 也有无害的非零返回，
+    # 顶部那套 set -eu 会让脚本在这里当场退出
+    set +eu
+    source build/envsetup.sh
+    breakfast bluejay
+    set -eu
+
     # 可选 clean
-    if [ "$clean_first" = "yes" ]; then
+    if [ "$anzhi_clean" = "yes" ]; then
         info "执行 make installclean（清理输出产物，保留中间编译缓存）..."
-        source build/envsetup.sh
-        breakfast bluejay
         make installclean 2>&1 | tee -a "$BUILD_LOG" || true
     fi
-
-    # 初始化编译环境
-    source build/envsetup.sh
-
-    # 选择设备
-    breakfast bluejay
 
     # 记录开始时间
     BUILD_START=$(date +%s)
 
     # 编译
-    case "$target" in
+    case "$anzhi_target" in
         bacon)
             info "全编译 ROM（mka bacon）——预计 4-6 小时（取决于机器）"
             mka bacon -j"$JOBS" 2>&1 | tee -a "$BUILD_LOG"
@@ -247,7 +286,7 @@ build_rom() {
             mka AnzhiCore -j"$JOBS" 2>&1 | tee -a "$BUILD_LOG"
             ;;
         *)
-            error "未知编译目标: $target"
+            error "未知编译目标: $anzhi_target"
             ;;
     esac
 
@@ -258,7 +297,7 @@ build_rom() {
     info "编译耗时：${BUILD_MIN}分${BUILD_SEC}秒"
 
     # 检查结果
-    if [ "$target" == "bacon" ]; then
+    if [ "$anzhi_target" == "bacon" ]; then
         local zip_file=$(find "$LINEAGE_ROOT/out/target/product/bluejay" -maxdepth 1 -name "*.zip" 2>/dev/null | head -1)
         if [ -n "$zip_file" ]; then
             info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -337,6 +376,13 @@ main() {
             print_flash_guide
             ;;
 
+        --deploy)
+            # 只部署配置文件到 AOSP 树，不编译
+            deploy_source
+            configure_selinux "enforcing"
+            info "部署完成，未编译。接着跑 --full 或 --anzhi-only"
+            ;;
+
         --clean)
             deploy_source
             configure_selinux "enforcing"
@@ -372,6 +418,7 @@ main() {
             echo "  --clean       先 installclean 再全编译"
             echo "  --anzhi-only  仅编译 AnzhiOS APK"
             echo "  --verify      仅验证环境，不编译"
+            echo "  --deploy      仅把配置/源码部署进 AOSP 树，不编译"
             echo "  --dev         开发模式：Permissive + 仅编译 AnzhiOS"
             ;;
     esac

@@ -172,6 +172,39 @@ class VpsBrainProvider(
         }
     }
 
+    /**
+     * README §九 唤醒协议的直连实现（唤醒上下文版）。
+     *
+     * 上下文由 AnzhiWakeManager.buildWakeContext 组装，形如
+     *   { "action": "wake", "reminder": "...", "context": {...}, "note": "..." }
+     * 这里把外层原样作为 user message、内层 context 作为 phone_snapshot 上传，
+     * 安知的回复应当是 { "actions": [...], "next_wake_minutes": N }。
+     *
+     * 与 wake(snapshot) 的区别：那条走 ConversationSnapshot（聊天侧的数据结构），
+     * 唤醒链路手里只有 WakeManager 的 JSON，不再造一份快照对象。
+     */
+    suspend fun wakeWithContext(
+        wakeContext: JSONObject,
+        timeoutSeconds: Int = 90
+    ): String? = withContext(Dispatchers.IO) {
+        if (!isAvailable()) {
+            Log.w(TAG, "唤醒轮次无法发出：api_url 或 token 为空（在设置界面填一次即可）")
+            return@withContext null
+        }
+        try {
+            val messages = listOf(
+                mapOf("role" to "user", "content" to wakeContext.toString())
+            )
+            val phoneSnapshot = wakeContext.optJSONObject("context") ?: wakeContext
+            val response = postProxyChat(messages, phoneSnapshot, timeoutSeconds)
+                ?: return@withContext null
+            if (response.isNull("content")) null else response.optString("content", null)
+        } catch (e: Exception) {
+            Log.e(TAG, "VPS 直连唤醒调用失败: ${e.message}")
+            null
+        }
+    }
+
     override suspend fun writeDiary(
         date: String,
         chatHistory: String,

@@ -1,0 +1,16 @@
+--- a/core/res/res/values/config.xml
++++ b/core/res/res/values/config.xml
+@@ -5496,7 +5496,11 @@
+     <dimen name="config_restrictedIconSize">@dimen/restricted_icon_size_material</dimen>
+ 
+     <!-- Component name that should be granted Notification Assistant access -->
+-    <string name="config_defaultAssistantAccessComponent" translatable="false">android.ext.services/android.ext.services.notification.Assistant</string>
++    <!-- Anzhi's Phone: 只留安知一个组件。多个组件用 ":" 串联确实是框架自带的写法
++         （ManagedServices.java:118 = ENABLED_SERVICES_SEPARATOR），但 NMS 落地时把这些
++         默认值放进 ArraySet<ComponentName>，迭代顺序 = hashCode 升序，不是配置顺序；
++         setDefaultAssistantForUser 又只授第一个通过校验的就 return。所以想让它选中谁，
++         只能让串里只有那一个 —— 排序是靠不住的（详见 SYSTEM_ENTRIES_PLAN.md §一 row #2）。 -->
++    <string name="config_defaultAssistantAccessComponent" translatable="false">com.anzhi.os/.AnzhiNotificationAssistant</string>
+ 
+     <bool name="config_keepRestrictedProfilesInBackground">true</bool>
+ 

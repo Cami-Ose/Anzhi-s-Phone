@@ -2,16 +2,39 @@
 # Anzhi's Phone — 系统属性 SELinux 上下文
 # =============================================================================
 #
-# 保护 persist.anzhi.* 系统属性不被非授权进程读写。
-# 安装路径：system/sepolicy/private/property_contexts
+# 生效路径：vendor/anzhi/sepolicy/property_contexts（经 BOARD_SEPOLICY_DIRS 合并进
+#   out/target/product/bluejay/vendor/etc/selinux/vendor_property_contexts）
 #
-# 使用方法：
-#   编译时复制到 system/sepolicy/private/property_contexts
-#   或通过 build_rom.sh deploy_source() 自动注入
+# 为什么是 persist.vendor.* 前缀 + vendor_anzhi_prop 类型（2026-10-04 对过源码）
+# 判据在 system/sepolicy/build/soong/selinux_contexts.go:365-408，两条硬规则：
+#   1) 属性名必须落在白名单前缀里 —— `persist.vendor.` 在 allowedPropertyPrefixes 中；
+#   2) context（类型名）必须以 `vendor_` / `odm_` 开头（allowedContextPrefixes）。
+# 早先的 `persist.anzhi.* + anzhi_prop` 两条都违反 → check_prop_prefix --strict
+# 报 4 violations → 04:36 那轮编译在 65% 处失败，当时为出产物把条目整体注释停用。
+#
+# 属性实际落在哪个分区（别再误当 system 侧）：
+#   device.mk 用的是 legacy 的 PRODUCT_PROPERTY_OVERRIDES，而
+#   build/make/core/sysprop.mk:197-207 把这个 legacy 变量归到 **vendor** 侧的 _prop_vars_。
+#   实测产物命中 vendor/build.prop，system/build.prop 零命中 —— 所以「声明在 vendor 侧」
+#   与「值所在分区」本来就对得上，这正是能靠改名合规解决、不必动 LineageOS 上游
+#   system/sepolicy 的原因。
+#
+# 读取授权：类型 vendor_anzhi_prop 声明在 sepolicy/anzhi_service.te，
+# 由该文件的 set_prop(anzhi_app, …) / set_prop(anzhi_core_app, …) 给出（set_prop 含 get_prop）。
+# coredomain 读非 public vendor 属性被 private/property.te:189-198 neverallow 禁止，
+# 但 anzhi_app / anzhi_core_app 是自建的非 coredomain 域（anzhi_service.te:54、:408），
+# 那条管不到它们；万一 sepolicy_neverallows 仍报错，再给类型补 vendor_public_property_type。
+#
+# 红线不变：persist.vendor.anzhi.token **不写进 ROM**，由 Cami 在应用界面填、存 app 私有
+# SharedPreferences。这里声明它只是给 `adb shell setprop` 这条开发期补位后门留个标签。
 # =============================================================================
 
-# 安知系统属性（服务器地址、API Key 等敏感配置）
-persist.anzhi.            u:object_r:anzhi_prop:s0
-persist.anzhi.server_url  u:object_r:anzhi_prop:s0
-persist.anzhi.deepseek_key u:object_r:anzhi_prop:s0
-persist.anzhi.gemini_key   u:object_r:anzhi_prop:s0
+# 前缀规则一条就覆盖 persist.vendor.anzhi.* 全部子键；下面逐条列出是为了 getprop -Z
+# 和排查时一眼能看到归属，两组语义一致。
+persist.vendor.anzhi.                 u:object_r:vendor_anzhi_prop:s0
+persist.vendor.anzhi.api_url          u:object_r:vendor_anzhi_prop:s0
+persist.vendor.anzhi.token            u:object_r:vendor_anzhi_prop:s0
+persist.vendor.anzhi.server_url       u:object_r:vendor_anzhi_prop:s0
+persist.vendor.anzhi.deepseek_key     u:object_r:vendor_anzhi_prop:s0
+persist.vendor.anzhi.gemini_key       u:object_r:vendor_anzhi_prop:s0
+persist.vendor.anzhi.deepseek_api_key u:object_r:vendor_anzhi_prop:s0

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  安知 priv-app 特权权限 allowlist。
+
+  生效路径：/system_ext/etc/permissions/privapp-permissions-com.anzhi.os.xml
+  由 device/anzhi/bluejay/device.mk 的 PRODUCT_COPY_FILES 打入。
+
+  规则：app 是 /system_ext/priv-app 下的特权应用，manifest 里每个
+  signature|privileged 级权限都必须在这里有对应条目，否则开机时
+  SystemConfig 判为致命错误、system_server 起不来。
+  反过来，这里也不要留 manifest 没声明的条目。
+-->
+<permissions>
+    <privapp-permissions package="com.anzhi.os">
+        <!-- AnzhiBootReceiver 首次开机写 enabled_accessibility_services /
+             accessibility_enabled，让无障碍服务无需手动点选 -->
+        <permission name="android.permission.WRITE_SECURE_SETTINGS" />
+
+        <!-- 唤醒自触发（README §九）的精确闹钟。SCHEDULE_EXACT_ALARM 是 signature|privileged
+             （core/res/AndroidManifest.xml:6360），platform 签名只解决"能不能给"，
+             不解决"priv-app 声明了就必须逐条在白名单里"这一半。
+             2026-10-05 实机教训：只在 manifest 声明、没进这份白名单 →
+             AppIdPermissionPolicy.onSystemReady(:1823) 抛 IllegalStateException
+             "Signature|privileged permissions not in privileged permission allowlist"，
+             system_server 启动即死、zygote 崩溃循环、手机起不来（boot reason: zycold-fatal）。 -->
+        <permission name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+        <!-- 通知助理的"能不能当上"闸门（见 AndroidManifest 里同名的 uses-permission）。
+             prot=signature|privileged|role，带 privileged 位 → priv-app 声明了就必须逐条列出，
+             否则 enforce-privapp-permissions 下 system_server 起不来（同 SCHEDULE_EXACT_ALARM 的教训）。 -->
+        <permission name="android.permission.REQUEST_NOTIFICATION_ASSISTANT_SERVICE" />
+    </privapp-permissions>
+
+    <!-- AnzhiCore（com.anzhi.core）：签名级权限（INJECT_EVENTS / READ_FRAME_BUFFER / REORDER_TASKS /
+         INTERNAL_SYSTEM_WINDOW / MANAGE_ACTIVITY_TASKS）由 platform 签名直接授予，不进白名单；
+         只有带 privileged 位的 REAL_GET_TASKS 必须逐条列出。
+         一个文件可以含多个 package 块 —— SystemConfig 按 package 名合并所有 privapp-permissions-*.xml，
+         所以这里加块 = 只改内容，不动 device.mk 的 PRODUCT_COPY_FILES（动了就要重跑配置阶段）。 -->
+    <privapp-permissions package="com.anzhi.core">
+        <permission name="android.permission.REAL_GET_TASKS" />
+    </privapp-permissions>
+</permissions>

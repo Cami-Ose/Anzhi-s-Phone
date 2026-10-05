@@ -226,14 +226,20 @@ class AnzhiDreamService : DreamService() {
         context, DB_NAME, null, DB_VERSION
     ) {
         override fun onCreate(db: SQLiteDatabase) {
-            db.execSQL("PRAGMA journal_mode=WAL")
-            db.execSQL("PRAGMA busy_timeout=5000")
             db.execSQL("""
                 CREATE TABLE IF NOT EXISTS dream_state (
                     key   TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 )
             """)
+        }
+
+        override fun onConfigure(db: SQLiteDatabase) {
+            super.onConfigure(db)
+            // WAL 模式：读写不互斥（陷阱 18）。PRAGMA 必须在 onConfigure ——
+            // onCreate 跑在 SQLiteOpenHelper 的事务里，事务内改 journal_mode 会抛异常
+            db.rawQuery("PRAGMA journal_mode=WAL", null).use { it.moveToFirst() }
+            db.rawQuery("PRAGMA busy_timeout=5000", null).use { it.moveToFirst() }
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {

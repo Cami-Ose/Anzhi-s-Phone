@@ -98,6 +98,9 @@ class AnzhiAccessibility : AccessibilityService() {
         when (event?.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 Log.d(TAG, "窗口切换: ${event?.packageName} → ${event?.className}")
+                // 唤醒链路的事件输入之一：连切 5 个 App → 叫安安知看一眼（README §九）。
+                // 只交包名，不去读 UI 树。
+                AnzhiManagerService.feedForegroundApp(event?.packageName?.toString())
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 // 内容变化，不记录（太频繁）

@@ -2,16 +2,16 @@
 安知手机 后端入口 —— WebSocket 协议中转服务。
 
 VPS 不做 LLM 推理，仅做协议中转：
-  - 记忆检索/存储 → configured memory service
-  - 心情更新 → configured body service
-  - 聊天同步 → configured chat service
+  - 记忆检索/存储 → memory.example.com
+  - 心情更新 → body.example.com
+  - 聊天同步 → chat.example.com
   - 日记存储 → 记忆库
 
 启动：
   pip install -r requirements.txt
   python app.py
 
-然后手机端连 ws://<vps-host>:8080/anzhi?device=example-pixel-6a
+然后手机端连 ws://<vps-ip>:8080/anzhi?device=<device-id>
 """
 
 import asyncio

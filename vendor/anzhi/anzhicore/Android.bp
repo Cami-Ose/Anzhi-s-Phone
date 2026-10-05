@@ -6,6 +6,11 @@ android_app {
     ],
     manifest: "AndroidManifest.xml",
     privileged: true,
+
+    // /system/priv-app 受 generic_system.mk 的 artifact path 白名单限制，
+    // 自建包放这里会直接让 soong 分析失败；跟着 AnzhiOS 一起进 system_ext
+    system_ext_specific: true,
+
     platform_apis: true,
     certificate: "platform",
 }

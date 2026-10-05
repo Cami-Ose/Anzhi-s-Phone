@@ -1,0 +1,46 @@
+diff --git a/aosp_bluejay.mk b/aosp_bluejay.mk
+index 7de757e..630ec55 100644
+--- a/aosp_bluejay.mk
++++ b/aosp_bluejay.mk
+@@ -1,7 +1,8 @@
+-#
+-# SPDX-FileCopyrightText: 2021 The Android Open-Source Project
++# Copyright 2021 The Android Open-Source Project
+ # SPDX-License-Identifier: Apache-2.0
+-#
++
++DEVICE_CODENAME := bluejay
++DEVICE_PATH := device/google/bluejay
+ 
+ $(call inherit-product, device/google/gs101/aosp_common.mk)
+ $(call inherit-product, device/google/bluejay/device-bluejay.mk)
+@@ -11,3 +12,5 @@ PRODUCT_DEVICE := bluejay
+ PRODUCT_MODEL := AOSP on Bluejay
+ PRODUCT_BRAND := Android
+ PRODUCT_MANUFACTURER := Google
++
++# Include Anzhi OS device overlay
+diff --git a/bluejay/BoardConfig.mk b/bluejay/BoardConfig.mk
+index 8634c17..969b232 100644
+--- a/bluejay/BoardConfig.mk
++++ b/bluejay/BoardConfig.mk
+@@ -30,4 +30,7 @@ BOARD_VENDOR_SEPOLICY_DIRS += \
+ # WiFi
+ include device/google/gs101/wifi/BoardConfig-wifi.mk
+ 
+-include $(VENDOR_PATH)/BoardConfigVendor.mk
++-include vendor/google/bluejay/BoardConfigVendor.mk
++
++# Anzhi's Phone
++include device/google/bluejay/BoardConfig_anzhi.mk
+diff --git a/lineage_bluejay.mk b/lineage_bluejay.mk
+index 64daa2f..343b699 100644
+--- a/lineage_bluejay.mk
++++ b/lineage_bluejay.mk
+@@ -28,3 +28,6 @@ PRODUCT_BUILD_PROP_OVERRIDES += \
+     DeviceProduct=$(DEVICE_CODENAME)
+ 
+ $(call inherit-product, $(VENDOR_PATH)/$(DEVICE_CODENAME)-vendor.mk)
++
++# Include Anzhi OS device overlay
++$(call inherit-product, device/anzhi/bluejay/device.mk)

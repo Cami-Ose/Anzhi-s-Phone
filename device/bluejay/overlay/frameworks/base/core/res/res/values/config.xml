@@ -1,62 +1,76 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   =============================================================================
-  Anzhi's Phone — config.xml 覆盖（frameworks/base/core/res/res/values/config.xml）
+  Anzhi's Phone — frameworks/base 资源覆盖
   =============================================================================
 
-  安装路径：device/bluejay/overlay/frameworks/base/core/res/res/values/config.xml
+  生效路径（2026-10-05 实测更正；此前记的"overlay 静默失效"是错的，错在只查了 framework-res.apk）：
+    device/anzhi/bluejay/device.mk:41  DEVICE_PACKAGE_OVERLAYS += device/anzhi/bluejay/overlay
+    → soong 把这里的内容编成一个**静态 RRO**：
+        /vendor/overlay/framework-res__lineage_bluejay__auto_generated_rro_vendor.apk
+        包名 android.auto_generated_rro_vendor_，targetPackage=android，isStatic=true
+        ↑ 10-05 10:5x 更正两条：
+          ① `cmd overlay dump` 实测这份的 mPriority 是 **2**（不是 badging 里那个 0）；同一 target 包上还挂着
+             `/product/overlay/framework-res__lineage_bluejay__auto_generated_rro_product.apk`，**mPriority=19**。
+          ② 但**这份 overlay 不会被那份盖掉**：全量 dump 里 `0x01040235 (string/config_defaultAssistantAccessComponent)`
+             **只有 vendor 这一份在映射**，product 那份不定义这个资源 ⇒ priority 高低在这里不构成竞争。
+             我 07:31 说的"输在优先级"是在一份被 head 截断的输出上下错的结论，已撤回。
+          ③ 10-05 12:3x 补上 P0 行 2 的真根因（不在覆盖层链路上）：`ManagedServices.upgradeDefaultsXmlVersion()`
+             （ManagedServices.java:809-837）里 `/data/system/notification_policy.xml` 存的 `defaults` 属性
+             优先级高于 config，config 只是最后兜底。走开机 `resetDefaultAssistantsIfNecessary()` →
+             `resetDefaultFromConfig()` 重载后，实机新建 user 10 / 11 都拿到了安知。取证
+             `<forensics-root>\bootlogs\20261005-123457-nasreset\`、`20261005-123635-nas-durable\`。
+    → 运行时它**盖住** frameworks/base/core/res/res/values/config.xml 里的同名值。
+      所以改这份文件是真有效的；反倒是直接改上游 framework-res 那一行会被这里覆盖掉。
+    → 代价：改这份文件必须重编 vendorimage 并刷 vendor 分区才进得了手机。
+    实测证据：build12 产出的这个 RRO 里 dump 出来的值就是本文件旧内容的原文
+      （aapt2 dump resources → "android.ext.services/…:com.anzhi.os/…"）。
 
-  用途：覆盖 AOSP 默认配置：
-    1. Doze 白名单预埋（陷阱 13：Deep Doze 冻结闹钟）
-       把 com.anzhi.os 加入 deviceidle.xml 白名单，AlarmManager 定时器
-       在深度休眠模式下仍然触发，不会被内核挂起。
-    2. Notification Assistant 默认启用列表
-       开机自动注册 com.anzhi.os 为通知助理，无需 Cami 手动去设置里点选。
-    3. Accessibility Service 默认启用列表
-       开机自动启用 com.anzhi.os/.AnzhiAccessibility，无需手动开。
+    config_defaultAssistantAccessComponent  <string>
+      NotificationManagerService.loadDefaultsFromConfig()（:12619 起）读它，按
+      ManagedServices.ENABLED_SERVICES_SEPARATOR（':'）切分，再交给
+      setDefaultAssistantForUser()（:1064）。那个循环是 `if (allowAssistant(userId, cn)) return;`，
+      而 defaults 是 ArraySet，遍历顺序由 ComponentName.hashCode() 决定（不是字符串顺序），
+      所以"把安知排在前面"不是可行的杠杆 —— 要安知当默认，这个值里就只能有安知。
+      登记时机只有两处：loadPolicyFile() 的 FileNotFoundException 分支（:1295，= 清过 /data 的首次开机）
+      和 ACTION_USER_ADDED（:2447，= 新建用户）。她一旦在设置里手动改过，userSet 生效，
+      ROM 不会再擅自把安知复活。
 
-  合并方式：
-    方法 A（推荐）：device tree overlay
-      在 device/google/bluejay/device.mk 中添加：
-        DEVICE_PACKAGE_OVERLAYS += device/google/bluejay/overlay
-
-    方法 B：直接修改 frameworks/base/core/res/res/values/config.xml
-      （需要 fork frameworks/base，不推荐）
-
-  注意：config.xml 是 Android 资源文件，只需覆盖需要改的数组项。
-        overlay 会自动合并 AOSP 默认值和安知自定义值。
+    config_defaultAssistant  <string>（10-05 13:0x 新加，P0 行 3「长按电源打得开聊天」的出厂通道）
+      这个资源是**包名**，不是组件名：frameworks/base/core/res/res/values/config.xml:2475-2476
+      的原文注释是 "The name of the package that will hold the assistant role by default."，
+      上游默认值是空串 `<string name="config_defaultAssistant" translatable="false" />`。
+      PermissionController 的 roles.xml:105-117 里 android.app.role.ASSISTANT 这条写着
+      `defaultHolders="config_defaultAssistant"`、`exclusive="true"`、`fallBackToDefaultHolder="true"`、
+      `requestable="false"` ⇒ 想让"长按电源"有主，就得让这个角色**有持有者**，靠 request 是走不通的。
+      为什么必须走角色而不是直接写 Settings.Secure.ASSISTANT：
+      VoiceInteractionManagerService.java:2476-2508 的 onRoleHoldersChanged(ROLE_ASSISTANT, user)
+      在 `roleHolders.isEmpty()` 时会把 `Settings.Secure.ASSISTANT` **写成空串**（同时清 VOICE_INTERACTION_SERVICE），
+      这台机器上实测就是这样：早上手动 `settings put secure assistant …` 确认写进去了，现在又是空
+      （改动前基线：新建探针用户的 get-role-holders 为空、按用户读 secure assistant 也是 null）。
+      角色一旦有持有者，同一段代码走 else 分支：先找 role holder 的 VoiceInteractionService（我们没有），
+      再退到它的 ACTION_ASSIST activity（:2544-2558），把组件名写进 Settings.Secure.ASSISTANT。
+      实机已证这条链：给 user 0 用 cmd role add-role-holder 加上 ASSISTANT 持有者 com.anzhi.os，
+      之后 `settings get secure assistant` = `com.anzhi.os/.chat.AnzhiChatActivity`
+      （取证 `<forensics-root>\bootlogs\20261005-130032-assistrole\`）。注意那是**手动 /data 状态**，
+      这条 overlay 才是出厂通道。
+      候选资格核过：AssistantRoleBehavior.java:128-146 要求包里有 exported 的 ACTION_ASSIST activity，
+      AnzhiChatActivity 是 `android:exported="true"`（AndroidManifest.xml:197）+ ASSIST intent-filter（:203-206），
+      机上 `cmd package query-activities -a android.intent.action.ASSIST` 解析到的就是它。
+      竞争排查（按 ① 的规矩做全量，不看 priority）：机上完整 `cmd overlay dump`（2881 行）里
+      含 `config_defaultAssistant` 的只有 1 行，且那行是 `config_defaultAssistantAccessComponent` ⇒
+      **没有任何 RRO 定义 config_defaultAssistant**，我们这份是唯一写它的人，不存在被盖问题。
+      取证 `<forensics-root>\bootlogs\20261005-130124-defassist-map\overlay_dump.txt`。
   =============================================================================
 -->
-
 <resources>
 
-    <!-- ────────────────────────────────────────────────
-         Doze 白名单预埋（陷阱 13 防御）
-         安知核心服务进程写入系统 deviceidle.xml 白名单
-         等效命令：adb shell dumpsys deviceidle whitelist +com.anzhi.os
-         作用：AnzhiWakeManager/AlarmManager 定时器在 Deep Doze
-              时仍然可以触发，WebSocket 心跳不会被内核掐断
-        ──────────────────────────────────────────────── -->
-    <string-array name="config_deviceIdleWhitelist" translatable="false">
-        <item>com.anzhi.os</item>
-    </string-array>
+    <!-- 单组件。Google 的 ext.services 不再列为默认：
+         两组件时实机新建用户拿到的是它（10-05 用 pm create-user 复现，userSet: false）。 -->
+    <string name="config_defaultAssistantAccessComponent" translatable="false">com.anzhi.os/.AnzhiNotificationAssistant</string>
 
-    <!-- ────────────────────────────────────────────────
-         Notification Assistant 默认启用列表
-         等效于把 anzhi_assistant_grant.xml 打入
-         /system/etc/default-permissions/（该文件已处理）
-         此为双保险——两种方法都配上
-        ──────────────────────────────────────────────── -->
-    <string-array name="config_defaultEnabledNotificationAssistants" translatable="false">
-        <item>com.anzhi.os/.AnzhiNotificationAssistant</item>
-    </string-array>
-
-    <!-- ────────────────────────────────────────────────
-         Accessibility Service 默认启用列表
-         Step 8: AnzhiAccessibility 开机自启
-        ──────────────────────────────────────────────── -->
-    <string-array name="config_defaultAccessibilityService" translatable="false">
-        <item>com.anzhi.os/.AnzhiAccessibility</item>
-    </string-array>
+    <!-- 长按电源键那条链的角色默认持有者：**只能填包名**。
+         空串时 ASSISTANT 角色没有 holders，VIMS 会把 Settings.Secure.ASSISTANT 擦成空（详见文件头第 3 条）。 -->
+    <string name="config_defaultAssistant" translatable="false">com.anzhi.os</string>
 
 </resources>

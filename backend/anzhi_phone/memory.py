@@ -28,7 +28,7 @@ RETRY_COOLDOWN = 5 * 60  # 5 分钟
 
 class MemoryBridge:
     """
-    连接通过 `MEMORY_API_URL` 配置的记忆服务。
+    连接安知记忆库（memory.example.com）。
 
     手机端需要记忆的场景：
       - UI 操作路径缓存（"ui:微信:设免打扰" → 操作序列）

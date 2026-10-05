@@ -7,9 +7,9 @@
   VPS 只做 4 类协议消息的纯中转。
 
 保留的协议消息：
-  memory_search / memory_store  → configured memory service
-  mood_update                    → configured body service (TODO)
-  chat_sync                      → configured chat service (TODO)
+  memory_search / memory_store  → 记忆库（memory.example.com）
+  mood_update                    → 心情服务（body.example.com，TODO）
+  chat_sync                      → 聊天记录同步（chat.example.com，TODO）
   diary_store                    → 日记存储（暂存记忆库）
   status_update                  → 仅记录日志，不处理
   heartbeat                      → 静默丢弃
@@ -34,7 +34,7 @@ class AnzhiPhoneHandler:
     def __init__(self, device_id: str, send_func: Callable):
         """
         Args:
-            device_id: 设备唯一标识（如 "example-pixel-6a"）
+            device_id: 设备唯一标识（如 "<device-id>"）
             send_func: 给手机发消息的函数。签名: (msg_type: str, payload: dict) -> None
         """
         self.device_id = device_id
@@ -82,7 +82,7 @@ class AnzhiPhoneHandler:
 
     async def _handle_memory_search(self, payload: dict) -> None:
         """
-        OS 请求记忆库向量检索 → 转发到配置的记忆服务
+        OS 请求记忆库向量检索 → 转发到 memory.example.com
 
         请求: { "query": "...", "top_k": 5 }
         响应: MEMORY_RESULT { "query": "...", "hits": [...] }
@@ -105,7 +105,7 @@ class AnzhiPhoneHandler:
 
     async def _handle_memory_store(self, payload: dict) -> None:
         """
-        OS 请求存入新记忆 → 转发到配置的记忆服务
+        OS 请求存入新记忆 → 转发到 memory.example.com
 
         请求: { "text": "...", "source": "...", "tags": [...] }
         响应: MEMORY_ACK { "status": "stored" }
@@ -127,18 +127,18 @@ class AnzhiPhoneHandler:
 
     async def _handle_mood_update(self, payload: dict) -> None:
         """
-        OS 上报心情事件 → 转发到配置的身体服务（TODO）
+        OS 上报心情事件 → 转发到 body.example.com（TODO）
 
         当前阶段：仅记录日志，后续对接心情计算端点。
         """
         event = payload.get("event", "")
         detail = payload.get("detail", "")
         logger.info(f"[{self.device_id}] 💭 心情事件: {event} — {detail}")
-        # TODO: POST configured body service endpoint
+        # TODO: POST body.example.com/api/mood
 
     async def _handle_chat_sync(self, payload: dict) -> None:
         """
-        OS 上传整轮聊天记录 → 转发到配置的聊天服务（TODO）
+        OS 上传整轮聊天记录 → 转发到 chat.example.com（TODO）
 
         当前阶段：仅记录日志，后续对接聊天站点 API。
         """
@@ -151,7 +151,7 @@ class AnzhiPhoneHandler:
             f"[{self.device_id}] 💬 chat_sync: session={session_id}, "
             f"window={window}, messages={len(messages)}, log_entries={len(today_log)}"
         )
-        # TODO: POST configured chat service endpoint
+        # TODO: POST chat.example.com/api/chat_sync
 
     async def _handle_status_update(self, payload: dict) -> None:
         """

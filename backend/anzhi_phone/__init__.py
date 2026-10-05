@@ -8,7 +8,7 @@
 模块：
   handler.py  — 协议消息路由（memory/mood/chat_sync/diary 仅 4 类）
   models.py   — WebSocket 消息协议定义
-  memory.py   — 记忆库桥接（地址由 MEMORY_API_URL 配置）
+  memory.py   — 记忆库桥接（memory.example.com）
   config.py   — 环境变量配置
 
 已删除（迁移到手机端 Kotlin）：

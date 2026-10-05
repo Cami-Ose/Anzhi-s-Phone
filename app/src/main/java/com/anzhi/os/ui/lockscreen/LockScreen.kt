@@ -14,6 +14,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.delay
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.anzhi.os.ui.components.AnzhiStatusBar
 import com.anzhi.os.ui.components.FloatingParticles
 import com.anzhi.os.ui.components.PixelTimeText
@@ -113,6 +114,11 @@ fun LockScreen(
                 color = AnzhiTextSecondary
             )
 
+            Spacer(Modifier.height(20.dp))
+
+            // 安知标识横带：开机第一眼就知道这是谁的机子
+            EnzoBrandBand()
+
             Spacer(Modifier.weight(0.8f))
 
             // 锁屏信息区域
@@ -160,6 +166,41 @@ fun LockScreen(
                     )
                 }
         )
+    }
+}
+
+/**
+ * 安知标识横带 — 一根粉色定位柱 + 像素字 enzosphere + 一行欢迎语。
+ * 故意左对齐：整屏其余元素都是居中，这一块的偏是"这是我们的机器"的记号。
+ */
+@Composable
+private fun EnzoBrandBand() {
+    val brandPink = Color(0xFFFF6FA3)
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .height(54.dp)
+                .background(brandPink)
+        )
+        Spacer(Modifier.width(16.dp))
+        Column(horizontalAlignment = Alignment.Start) {
+            Text(
+                text = "enzosphere",
+                style = AnzhiTypography.pixelTitle.copy(fontSize = 36.sp, letterSpacing = 3.sp),
+                color = AnzhiTextPrimary
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "welcome home · 欢迎回家",
+                style = AnzhiTypography.pixelSubtitle.copy(fontSize = 14.sp, letterSpacing = 4.sp),
+                color = brandPink
+            )
+        }
     }
 }
 

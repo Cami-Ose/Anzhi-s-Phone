@@ -11,13 +11,30 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
-    <!-- 系统级权限（需要 Magisk/LSPosed 授予） -->
+    <!-- 系统级权限：platform 签名的 priv-app 才有，signature|privileged 那条
+         必须同时列在 privapp-permissions-com.anzhi.os.xml 里 -->
     <uses-permission android:name="android.permission.INJECT_EVENTS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" />
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_ASSISTANT_SERVICE" />
+    <!-- 2026-10-05 凌晨实机定位：能不能"当上"通知助理，卡的不是上面那条 BIND_，
+         而是这条 REQUEST_。ManagedServices.getRequiredPermission()
+         （NotificationManagerService.java:12746，NotificationAssistants 内部类）返回的是
+         android.Manifest.permission.REQUEST_NOTIFICATION_ASSISTANT_SERVICE，
+         它喂给 canUseManagedServices(:12530) 做 checkPermission；不过就直接 return，
+         连一行日志都不打 —— 这解释了之前所有"改了没反应"：串首、重置 nas_settings_updated、
+         cmd notification allow_assistant 三条路全部在同一道闸门被静默拒绝。
+         prot=signature|privileged|role（core/res/AndroidManifest.xml:7574）：
+         我们自己签 platform key 只吃到 signature 那一半，privileged 一半仍需逐条进 allowlist。 -->
+    <uses-permission android:name="android.permission.REQUEST_NOTIFICATION_ASSISTANT_SERVICE" />
     <uses-permission android:name="android.permission.READ_FRAME_BUFFER" />
+
+    <!-- 使唤 AnzhiCore 系统服务的闸门（signature 级，由 com.anzhi.core 自己声明）。
+         没有它 bindService(com.anzhi.core/.AnzhiCoreService) 会被拒 → 服务拉不起来 →
+         anzhi_core 不会注册进 ServiceManager。同签名所以自动授予，不需要进白名单。 -->
+    <uses-permission android:name="com.anzhi.permission.CORE_SERVICE" />
 
     <!-- CDP WebView 需要的权限 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -30,18 +47,30 @@
 
     <uses-permission android:name="com.anzhi.os.permission.SUBMIT_ANZHI_REQUEST" />
 
+    <!-- 唤醒自触发（README §九 / Step 11）要 setExactAndAllowWhileIdle。
+         AOSP 定义：core/res/AndroidManifest.xml:6360 SCHEDULE_EXACT_ALARM =
+         protectionLevel="signature|privileged|appop" —— 我们是 platform 签名，
+         声明即授予。缺这条时 AnzhiWakeManager.scheduleNextWake() 直接 SecurityException，
+         闹钟一次都排不上（这就是 Step 11 名义上"已完成"却从不醒的根因之一）。 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
     <application
         android:allowBackup="true"
         android:label="安知手机"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
-        <!-- 系统管理 Service：AIDL Binder + 会话管理 + 动作执行 -->
+        <!-- 系统管理 Service：AIDL Binder + 会话管理 + 动作执行
+             foregroundServiceType 必须是 specialUse：AOSP 的 BOOT_COMPLETED 允许清单
+             （frameworks/base/.../am/ActivityManagerConstants.java:195-201）里只有
+             connectedDevice/health/remoteMessaging/systemExempted/specialUse/location，
+             dataSync 从开机广播起前台服务会直接抛 ForegroundServiceStartNotAllowedException。
+             所需权限 FOREGROUND_SERVICE_SPECIAL_USE 已在上方 :25 声明。 -->
         <service
             android:name=".AnzhiManagerService"
             android:exported="true"
             android:permission="com.anzhi.os.permission.SUBMIT_ANZHI_REQUEST"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="specialUse" />
 
         <!-- 开机自启接收器：BOOT_COMPLETED → 拉起 AnzhiManagerService -->
         <receiver
@@ -76,12 +105,25 @@
         </service>
 
         <!-- Step 10：通知全权接管（Notification Assistant，系统级正式角色）
-             拥有通知全权控制：改重要度/排序/隐藏敏感内容/加操作按钮/预设回复 -->
+             拥有通知全权控制：改重要度/排序/隐藏敏感内容/加操作按钮/预设回复
+
+             [P0 修复] 必须 directBootAware="true"，否则 ROM 默认槽位永远轮不到安知：
+             NotificationManagerService.java:1295 —— 只有 /data/system/notification_policy.xml
+             不存在时才调 loadDefaultApprovedServices(USER_SYSTEM)，而这一刻在 system_server
+             启动期、用户尚未解锁；NotificationManagerService.java:12623 loadDefaultsFromConfig()
+             用 queryPackageForServices(..., MATCH_DIRECT_BOOT_AWARE|MATCH_DIRECT_BOOT_UNAWARE,
+             USER_SYSTEM) 去解析 config_defaultAssistantAccessComponent 里的每个组件，
+             而 ManagedServices.java:1401 那条查询在用户锁着的时候只会返回 direct-boot 可见的组件。
+             对照证据：AOSP 自带助理 packages/modules/ExtServices/AndroidManifest.xml:81 就写了
+             android:directBootAware="true"——它进得来、我们进不来，差别只在这个属性。
+             我们没写 → approved.contains(assistantCn) 为 false → 默认值被静默丢弃
+             （实机 dumpsys notification 只有 android.ext.services 一项，且 logcat 里
+             连 "Skipping notification assistant service" 都没有，说明根本没走到权限过滤那步）。 -->
         <service
             android:name=".AnzhiNotificationAssistant"
             android:exported="true"
-            android:permission="android.permission.BIND_NOTIFICATION_ASSISTANT_SERVICE"
-            android:foregroundServiceType="dataSync">
+            android:directBootAware="true"
+            android:permission="android.permission.BIND_NOTIFICATION_ASSISTANT_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationAssistantService" />
             </intent-filter>
@@ -137,15 +179,43 @@
 
         <!-- ── Step 6: Chat 界面 ── -->
 
-        <!-- 主聊天 Activity（Cami 长按电源键唤起） -->
+        <!-- 主聊天 Activity（Cami 长按电源键唤起）
+
+             [对齐 README §一/§二/§十一] "长按电源键 → 唤起安知聊天（主聊天窗口）"
+             原规划走的是系统正式入口，不是我们现在这套"仪表盘 Activity 里 onKeyLongPress
+             偷听电源键"的手工活（AnzhiDashboardActivity.kt:178-185 只在仪表盘有焦点时生效，
+             桌面/别的 App 里长按电源键完全叫不应安知）。证据链：
+               · 设备 framework-res 实测 config_longPressOnPowerBehavior=5（=LONG_PRESS_POWER_ASSISTANT）
+                 ——从 /system/framework/framework-res.apk 直接 aapt2 dump 出来的生效值，不是猜的
+               · PhoneWindowManager.java:1682-1690 case LONG_PRESS_POWER_ASSISTANT → launchAssistAction(...)
+               · AssistUtils.java:287-295 getAssistComponentForUser() 原样返回 Settings.Secure.ASSISTANT
+                 的组件名，不做 intent-filter 校验、不查额外权限
+             所以只要：①本 Activity 接 ASSIST（下面的 intent-filter），
+             ②BootReceiver 种一次 Settings.Secure.ASSISTANT（已有 WRITE_SECURE_SETTINGS）。 -->
         <activity
             android:name=".chat.AnzhiChatActivity"
-            android:exported="false"
+            android:exported="true"
             android:theme="@android:style/Theme.Material.NoActionBar"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
             android:windowSoftInputMode="adjustResize"
-            android:hardwareAccelerated="true" />
+            android:hardwareAccelerated="true">
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.assist_label"
+                android:value="安知" />
+        </activity>
+
+        <!-- VPS 接入设置：网关地址 + 接口令牌（令牌不进 ROM，只存应用私有 prefs） -->
+        <activity
+            android:name=".ui.settings.VpsSettingsActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize" />
 
         <!-- ── Step 12: 仪表盘 + 锁屏 + 智能抽屉 UI ── -->
 

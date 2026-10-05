@@ -44,6 +44,7 @@ fun ChatScreen(
     onNewSession: () -> Unit = {},
     onToggleSidebar: () -> Unit = {},
     onClose: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
@@ -203,7 +204,8 @@ fun ChatScreen(
                 currentSessionId = state.currentSessionId,
                 onSwitchSession = onSwitchSession,
                 onNewSession = onNewSession,
-                onClose = onToggleSidebar
+                onClose = onToggleSidebar,
+                onOpenSettings = onOpenSettings
             )
         }
     }

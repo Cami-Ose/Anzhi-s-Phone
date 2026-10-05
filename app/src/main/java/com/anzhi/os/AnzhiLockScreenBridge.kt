@@ -404,8 +404,9 @@ class AnzhiLockScreenBridge private constructor(
         override fun onConfigure(db: SQLiteDatabase) {
             super.onConfigure(db)
             // 陷阱 18 防御：WAL 模式读写不互斥
-            db.execSQL("PRAGMA journal_mode=WAL")
-            db.execSQL("PRAGMA busy_timeout=5000")
+            // PRAGMA 返回结果行，必须 rawQuery；execSQL 会抛异常打断整个 onConfigure
+            db.rawQuery("PRAGMA journal_mode=WAL", null).use { it.moveToFirst() }
+            db.rawQuery("PRAGMA busy_timeout=5000", null).use { it.moveToFirst() }
         }
     }
 }

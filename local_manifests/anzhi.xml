@@ -19,7 +19,7 @@
     6. mka bacon -j4
 
   ⚠️ 标注说明：
-    [LOCAL]  = 无需 git repo，从 <project-root>\ 手动复制到 AOSP 树
+    [LOCAL]  = 无需 git repo，从 <local-path> 手动复制到 AOSP 树
     [GITHUB] = 需要在 github.com/anzhi-os 创建对应 repo 后取消注释
     [TODO]   = 待创建/待决定
   =============================================================================
@@ -45,7 +45,7 @@
        ────────────────────────────────────────────────────────────────
 
        路径：packages/apps/AnzhiOS/
-       内容：<project-root>\app\ 下全部源码
+       内容：<local-path> 下全部源码
              含 AnzhiManagerService、AnzhiSocket、AnzhiSessionStore、
              AnzhiAuditLog、PathCache、ActionTransactionLock、
              AnzhiAccessibility、AnzhiNotificationAssistant、
@@ -54,8 +54,8 @@
              action/、backend/、input/、display/、cdp/、llm/、chat/、dashboard/
        签名：platform key（Android.bp 中声明 certificate: "platform"）
 
-       [LOCAL] 手动部署：把 <project-root>\app\ 目录完整复制到 AOSP 树：
-         cp -r "<project-root>\app\*" packages/apps/AnzhiOS/
+       [LOCAL] 手动部署：把 <local-path> 目录完整复制到 AOSP 树：
+         cp -r "<local-path>" packages/apps/AnzhiOS/
 
        [GITHUB] 待创建 repo：platform_packages_apps_AnzhiOS
          → 取消注释下面这行且移除 [LOCAL] 手动复制步骤：
@@ -94,7 +94,7 @@
        ────────────────────────────────────────────────────────────────
 
        [LOCAL] 手动部署（推荐）：
-         1. 复制 <project-root>\sepolicy\anzhi_service.te
+         1. 复制 <local-path>
             → system/sepolicy/private/anzhi_service.te
          2. 在 system/sepolicy/private/service_contexts 末尾添加：
             anzhi  u:object_r:anzhi_service:s0
@@ -167,6 +167,17 @@
        [LOCAL] 手动部署：把上述 PRODUCT_PACKAGES 和 PRODUCT_COPY_FILES
               加到 device/google/bluejay/device.mk 中。
 
+       ⚠ 本段是 7 月写的配方，三条已经过期（2026-10-05 按实机与源码核过）：
+         1. 真正生效的部署清单在 device/anzhi/bluejay/device.mk，只有 4 件事：
+            PRODUCT_PACKAGES += AnzhiOS / AnzhiCore；两条 PRODUCT_COPY_FILES
+            （privapp-permissions-com.anzhi.os.xml、android.software.notification_assistant.xml）；
+            DEVICE_PACKAGE_OVERLAYS += device/anzhi/bluejay/overlay。
+         2. 下面那条 default-permissions XML 从没进过镜像，而且机制本身不适用：
+            DefaultPermissionGrantPolicy 只授 runtime 级权限，通知助理是组件绑定，
+            正门是 config_defaultAssistantAccessComponent（走 overlay，编成 /vendor/overlay 里的静态 RRO）。
+         3. persist.anzhi.os.version / persist.anzhi.os.vps_url 都不存在了：属性一律 persist.vendor.anzhi.*，
+            且 VPS 地址与令牌出厂都不预填（界面值优先）；密钥永不烤进产物。
+
        [GITHUB] 待创建 repo：anzhi_platform_build
          → 取消注释下面几行：
   -->
@@ -189,6 +200,12 @@
        - overlay/frameworks/base/core/res/res/values/config.xml：
          - Doze 白名单预埋（陷阱 13）
          - config_defaultEnabledNotificationAssistants 包含 com.anzhi.os
+         ↑ 这两条都是 7 月的设想，两个资源名在 AOSP 里都不存在（overlay 覆盖必须与框架已有
+           的名字+类型逐字一致，否则等于没写）。overlay 现在只带一个键：
+           config_defaultAssistantAccessComponent = com.anzhi.os/.AnzhiNotificationAssistant，
+           它被 soong 编成静态 RRO 装进 /vendor/overlay，运行时盖住 framework-res 本体 ——
+           所以改 overlay 才是生效路径，直接改上游 frameworks/base 那份是被盖住的（10-05 翻案）。
+           Doze 白名单的正门另有其路：sysconfig 的 allow-in-power-save 标签，见 SYSTEM_ENTRIES_PLAN.md §2.1。
        - sepolicy/file_contexts：anzhi 相关文件标签
 
        [LOCAL] 手动部署：直接修改 AOSP 树中 device/google/bluejay/ 的文件。
@@ -211,15 +228,23 @@
        目录结构（放在 AOSP 树 vendor/anzhi/ 下）：
          vendor/anzhi/
          ├── sepolicy/
-         │   └── anzhi_service.te          ← 从 <project-root>\sepolicy\ 复制
+         │   └── anzhi_service.te          ← 从 <local-path> 复制
          ├── default-permissions/
-         │   └── anzhi_assistant_grant.xml ← 从 <project-root>\default-permissions\ 复制
+         │   └── anzhi_assistant_grant.xml ← 从 <local-path> 复制
          └── Android.mk                    ← 见下方
 
        注意：default-permissions XML 需要打入 /system/etc/default-permissions/
        而不是 /vendor/etc/default-permissions/，因为 priv-app 放在 system_ext。
 
-       [TODO] 创建此 vendor repo 或不依赖 git —— 从 <project-root>\ 手动复制到 AOSP 树即可。
+       [TODO] 创建此 vendor repo 或不依赖 git —— 从 <local-path> 手动复制到 AOSP 树即可。
+
+       ⚠ 这一段也是 7 月的，2026-10-05 按 scripts/build_rom.sh 与树内实况核对后的真实映射是：
+         仓库 sepolicy/                    → 树 vendor/anzhi/sepolicy/（te + property_contexts + seapp_contexts + service_contexts）
+         仓库 vendor/anzhi/privapp-permissions/ → 树同名，由 device.mk 的 PRODUCT_COPY_FILES 打进 system_ext/etc/permissions
+         仓库 vendor/anzhi/anzhicore/      → 树同名（Android.bp + aidl + java，编成 AnzhiCore）
+         仓库 vendor/Android.mk            → 树 vendor/anzhi/Android.mk
+         仓库根没有 default-permissions/ 目录（vendor/default-permissions/ 是空目录），
+         那份 grant XML 现在只活在 open-source 快照里当遗留记录 —— 它从没进过镜像，也不该进。
   -->
 
 

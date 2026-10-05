@@ -587,11 +587,25 @@ class AnzhiWakeManager(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        alarmManager.setExactAndAllowWhileIdle(
-            AlarmManager.ELAPSED_REALTIME_WAKEUP,
-            triggerAtMs,
-            pendingIntent
-        )
+        if (alarmManager.canScheduleExactAlarms()) {
+            alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                triggerAtMs,
+                pendingIntent
+            )
+        } else {
+            // SCHEDULE_EXACT_ALARM 是 signature|privileged：manifest 声明 + privapp 白名单两条都齐了才拿得到
+            // （2026-10-05 就是漏了白名单那条，system_server 起不来）。拿不到时不许静默降级——
+            // 非精确闹钟在 Doze 下能晚几十分钟，"按时叫醒"这条设计就不成立了，所以报警并记审计。
+            Log.e(TAG, "精确闹钟被拒（canScheduleExactAlarms=false），退化为非精确窗口，唤醒时间可能大幅偏后")
+            auditLog.log("wake_exact_alarm_denied", "delay=${clamped}min")
+            alarmManager.setWindow(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                triggerAtMs,
+                clamped * 60_000L / 3,
+                pendingIntent
+            )
+        }
 
         Log.i(TAG, "下次唤醒: ${clamped}min 后 (预计 ${formatEta(triggerAtMs)})")
         auditLog.log("wake_scheduled", "delay=${clamped}min")
@@ -1126,9 +1140,12 @@ class AnzhiWakeManager(
         override fun onConfigure(db: SQLiteDatabase) {
             super.onConfigure(db)
             // 陷阱 18 防御：WAL 模式读写不互斥
-            db.execSQL("PRAGMA journal_mode=WAL")
+            // PRAGMA 会返回结果行，execSQL 遇到返回行的语句直接抛
+            // "Queries can be performed using SQLiteDatabase query or rawQuery methods only"，
+            // 于是 onConfigure 整体失败 → 这个 helper 的每次读写都报错（唤醒状态从来没存下来过）。
+            db.rawQuery("PRAGMA journal_mode=WAL", null).use { it.moveToFirst() }
             // 忙等 5 秒不立即抛 database locked
-            db.execSQL("PRAGMA busy_timeout=5000")
+            db.rawQuery("PRAGMA busy_timeout=5000", null).use { it.moveToFirst() }
         }
     }
 }

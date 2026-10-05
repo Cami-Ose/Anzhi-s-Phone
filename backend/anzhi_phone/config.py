@@ -42,9 +42,9 @@ WS_MAX_MSG_SIZE = int(os.getenv("WS_MAX_MSG_SIZE", str(10 * 1024 * 1024)))  # 10
 # VPS 基础设施 — VPS 只连接各站点，不代调 LLM API
 # ═══════════════════════════════════════════════════════════
 
-MEMORY_API_URL = os.getenv("MEMORY_API_URL", "https://memory.example.invalid")
-BODY_API_URL = os.getenv("BODY_API_URL", "https://body.example.invalid")
-CHAT_API_URL = os.getenv("CHAT_API_URL", "https://chat.example.invalid")
+MEMORY_API_URL = os.getenv("MEMORY_API_URL", "https://memory.example.com")
+BODY_API_URL = os.getenv("BODY_API_URL", "https://body.example.com")
+CHAT_API_URL = os.getenv("CHAT_API_URL", "https://chat.example.com")
 
 # ═══════════════════════════════════════════════════════════
 # 日志

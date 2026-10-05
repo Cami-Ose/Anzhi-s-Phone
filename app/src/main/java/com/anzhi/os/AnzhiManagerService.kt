@@ -1,16 +1,28 @@
 package com.anzhi.os
 
+import android.anzhi.IAnzhiCoreService
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.ServiceConnection
+import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.os.Binder
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.os.SystemProperties
 import android.util.Log
+import android.view.Gravity
+import android.view.WindowManager
+import android.widget.TextView
+import com.anzhi.os.cdp.VpsBrainProvider
 import com.anzhi.os.cc.CcLoopResult
 import com.anzhi.os.cc.CcProgressCallback
 import com.anzhi.os.cc.CcProvider
@@ -21,6 +33,10 @@ import com.anzhi.os.llm.DeepSeekClient
 import com.anzhi.os.llm.GeminiClient
 import com.anzhi.os.model.MessageType
 import com.anzhi.os.model.SocketMessage
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -60,9 +76,16 @@ class AnzhiManagerService : Service() {
         private const val DEFAULT_MAX_TOOL_CALLS = 5
         private const val REQUEST_TIMEOUT_SEC = 120L
 
+        /** 安知 speak → 仪表盘卡片的进程内广播（只发给自己） */
+        const val ACTION_ANZHI_SPEAK = "com.anzhi.os.action.ANZHI_SPEAK"
+
+        // ── AnzhiCore 系统服务组件（显式 bind 用；见 bindAnzhiCore） ──
+        private const val CORE_PACKAGE = "com.anzhi.core"
+        private const val CORE_SERVICE_CLASS = "com.anzhi.core.AnzhiCoreService"
+
         // ── CC API Key 系统属性名 ──
-        private const val PROP_DEEPSEEK_KEY = "persist.anzhi.deepseek_key"
-        private const val PROP_GEMINI_KEY = "persist.anzhi.gemini_key"
+        private const val PROP_DEEPSEEK_KEY = "persist.vendor.anzhi.deepseek_key"
+        private const val PROP_GEMINI_KEY = "persist.vendor.anzhi.gemini_key"
 
         /**
          * 读取系统属性（AOSP @hide API，需 platform_apis）。
@@ -70,6 +93,30 @@ class AnzhiManagerService : Service() {
          */
         private fun getSystemProperty(name: String): String {
             return SystemProperties.get(name, "")
+        }
+
+        // ── 唤醒系统的事件入口（README §九）──
+        // AnzhiWakeManager 只活在 Service 实例里，但喂事件的两方（无障碍服务读窗口、
+        // 聊天页发消息）拿不到 Service 的绑定。这里放一个进程内的弱引用点，
+        // Service onCreate 赋值、onDestroy 清空；没有实例时调用方什么都不做。
+        @Volatile
+        private var wakeRef: AnzhiWakeManager? = null
+
+        // ── AnzhiCore 的 AIDL 代理（bind 到手就缓存，全进程共享）──
+        // 为什么不再查 ServiceManager.getService("anzhi_core")：AnzhiCoreService 是普通
+        // app uid，addService 必被拒（见它的 onCreate），ServiceManager 名单里永远不会有
+        // 这个名字 —— 查它 = 永远 null = 一条看起来像"还没连上"的假降级。
+        // 真路径是 bindService：onBind 返回的就是同一个 binder，跨进程不需要 servicemanager。
+        @Volatile
+        var coreProxy: IAnzhiCoreService? = null
+            private set
+
+        fun feedForegroundApp(packageName: String?) {
+            if (!packageName.isNullOrBlank()) wakeRef?.onAppSwitched(packageName)
+        }
+
+        fun feedCamiChatted() {
+            wakeRef?.onCamiChatted()
         }
     }
 
@@ -81,6 +128,15 @@ class AnzhiManagerService : Service() {
 
     /** WebSocket 连接（延迟初始化，等 VPS 地址配置好） */
     private var socket: AnzhiSocket? = null
+
+    /** 与 AnzhiCore 的绑定；非 null 表示已 bind，销毁时要 unbind */
+    private var anzhiCoreConnection: ServiceConnection? = null
+
+    // ── 唤醒自触发（README §九）──
+    // scope 绑 Service 生命周期：onCreate 起、onDestroy 收。
+    private val wakeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var wakeManager: AnzhiWakeManager? = null
+    private var screenReceiver: BroadcastReceiver? = null
 
     /** 待处理的请求：requestId → 响应 latch */
     private val pendingRequests = ConcurrentHashMap<String, PendingRequest>()
@@ -183,8 +239,17 @@ class AnzhiManagerService : Service() {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
 
+        // 全局水印：解锁后、桌面上、任何应用之上都要看得见这是安知的机器
+        showWatermark()
+
         // 连接安知后端
         connectToServer()
+
+        // 把 AnzhiCore 拉起来（它的 addService 只在自己的 onCreate 里跑，没人 bind 就永远不注册）
+        bindAnzhiCore()
+
+        // 唤醒自触发系统（定时 / 连切 App / 电量 / 亮屏）
+        startWakeSystem()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -194,9 +259,249 @@ class AnzhiManagerService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
+        unbindAnzhiCore()
+        stopWakeSystem()
+        hideWatermark()
         socket?.disconnect()
         Log.i(TAG, "安知 Manager Service 停止")
         super.onDestroy()
+    }
+
+    // ─────────────────────────────────────
+    // AnzhiCore 系统服务：把它拉起来
+    // ─────────────────────────────────────
+
+    /**
+     * 把 AnzhiCore 拉起来并保持连接。
+     *
+     * 它是个普通 Service，没有任何一方 bind/start 它的 onCreate 就不会跑；
+     * 而它 onCreate 里的 ServiceManager.addService("anzhi_core") 在普通 app uid 下一定失败
+     * （已实测：注册不了，且曾经因此让 :core 进程每 1000ms 崩一次）。
+     * 所以本函数真正的作用不是"等它注册进 ServiceManager"，而是走 bindService 拿到 IBinder
+     * 存进 [coreProxy] —— 这是唯一一条能用到 AnzhiCore 能力的路，保持到本 Service 销毁。
+     */
+    private fun bindAnzhiCore() {
+        if (anzhiCoreConnection != null) return
+        val intent = Intent().setComponent(ComponentName(CORE_PACKAGE, CORE_SERVICE_CLASS))
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName, service: IBinder) {
+                // bind 成功 → 立刻把这个 IBinder 转成代理存进 companion，ActionExecutor 读它。
+                coreProxy = IAnzhiCoreService.Stub.asInterface(service)
+                // pingBinder 是唯一能证明"这个代理真能打通远端"的廉价手段；
+                // asInterface 本身不校验，返回一个能调但可能已死的代理。
+                val alive = try {
+                    service.pingBinder()
+                } catch (e: Exception) {
+                    Log.e(TAG, "pingBinder(AnzhiCore) 异常: ${e.message}")
+                    false
+                }
+                if (alive) {
+                    Log.i(TAG, "AnzhiCore 已连上，AIDL 代理可用（pingBinder=true）")
+                } else {
+                    // 连上但打不通：不能当没事发生，调用方会掉到 InputManager 降级
+                    Log.e(TAG, "AnzhiCore 已连上但 binder 不响应（记审计）")
+                    auditLog.log("anzhi_core_proxy_dead", "bound=$name")
+                }
+            }
+
+            override fun onServiceDisconnected(name: ComponentName) {
+                // :core 进程死了，缓存的代理必须清掉 —— 留着它，调用方会一直对死 binder 发请求
+                coreProxy = null
+                Log.e(TAG, "AnzhiCore 进程断开，缓存的 AIDL 代理已失效（记审计）")
+                auditLog.log("anzhi_core_disconnected", "name=$name")
+            }
+        }
+        val bound = try {
+            bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        } catch (e: Exception) {
+            Log.e(TAG, "bindService(AnzhiCore) 抛异常: ${e.message}")
+            auditLog.log("anzhi_core_bind_threw", e.message ?: "unknown")
+            false
+        }
+        if (!bound) {
+            Log.e(TAG, "AnzhiCore bind 失败：这条降级仍在（输入注入继续走 InputManager 隐藏 API）")
+            auditLog.log("anzhi_core_bind_failed", "package=$CORE_PACKAGE")
+            return
+        }
+        anzhiCoreConnection = connection
+    }
+
+    private fun unbindAnzhiCore() {
+        coreProxy = null
+        val connection = anzhiCoreConnection ?: return
+        anzhiCoreConnection = null
+        try {
+            unbindService(connection)
+        } catch (e: Exception) {
+            Log.w(TAG, "unbindService(AnzhiCore) 异常: ${e.message}")
+        }
+    }
+
+    // ─────────────────────────────────────
+    // 唤醒自触发（README §九）
+    // ─────────────────────────────────────
+
+    private fun startWakeSystem() {
+        val wm = AnzhiWakeManager(this, wakeScope, auditLog)
+        wm.onWakeTriggered = { ctx -> runWakeRound(ctx) }
+        wm.onSpeakRequested = { text, isEmergency -> broadcastSpeak(text, isEmergency) }
+        wakeManager = wm
+        wakeRef = wm
+        wm.start()
+
+        // 亮/熄屏是唤醒的会话输入（连续使用 2h 那条），WakeManager 自己只注册了闹钟和电量
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_ON -> wakeManager?.onScreenOn()
+                    Intent.ACTION_SCREEN_OFF -> wakeManager?.onScreenOff()
+                }
+            }
+        }
+        try {
+            registerReceiver(
+                receiver,
+                IntentFilter().apply {
+                    addAction(Intent.ACTION_SCREEN_ON)
+                    addAction(Intent.ACTION_SCREEN_OFF)
+                }
+            )
+            screenReceiver = receiver
+        } catch (e: Exception) {
+            Log.e(TAG, "亮/熄屏监听注册失败，连续使用那条唤醒时机不可用: ${e.message}")
+            auditLog.log("wake_screen_receiver_failed", e.message ?: "")
+        }
+    }
+
+    private fun stopWakeSystem() {
+        wakeRef = null
+        screenReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: Exception) {}
+        }
+        screenReceiver = null
+        wakeManager?.stop()
+        wakeManager = null
+    }
+
+    /**
+     * 一轮唤醒：把 WakeManager 组装好的上下文发给 VPS 的安知，取回 actions JSON。
+     * 无论成功、失败还是回复不是 JSON，都必须走 onWakeResponse 把互斥锁放开并排下次闹钟，
+     * 否则一次网络抖动就能让唤醒系统永久卡死。
+     */
+    private fun runWakeRound(wakeContext: JSONObject) {
+        val url = VpsConfig.apiUrl(this)
+        val token = VpsConfig.apiToken(this)
+        if (url.isBlank() || token.isBlank()) {
+            Log.w(TAG, "唤醒轮次没有发出：VPS 地址或令牌还没在设置界面填")
+            auditLog.log("wake_skipped_unconfigured", "url_blank=${url.isBlank()} token_blank=${token.isBlank()}")
+            wakeManager?.onWakeResponse(JSONObject())
+            return
+        }
+        val wm = wakeManager ?: return
+        wakeScope.launch {
+            val provider = VpsBrainProvider(url, token)
+            val reply = try {
+                provider.wakeWithContext(wakeContext)
+            } catch (e: Exception) {
+                Log.e(TAG, "唤醒轮次调用失败: ${e.message}")
+                null
+            }
+            val parsed = reply?.let { extractJsonObject(it) }
+            if (parsed == null) {
+                Log.e(TAG, "安知的唤醒回复不是 actions JSON，本轮按\"什么都不做\"处理。原文=${reply?.take(200) ?: "null"}")
+                auditLog.log("wake_reply_unparsed", (reply ?: "null").take(200))
+                wm.onWakeResponse(JSONObject())
+            } else {
+                wm.onWakeResponse(parsed) { type, text ->
+                    Log.w(TAG, "唤醒 action「$type」还没有执行端接线（text=${text.take(60)}）——记在欠账里")
+                    auditLog.log("wake_action_not_wired", "type=$type text=${text.take(120)}")
+                }
+            }
+        }
+    }
+
+    /** 模型常把 JSON 包在 ```json 围栏或前后废话里，这里只取第一个 { 到最后一个 } */
+    private fun extractJsonObject(raw: String): JSONObject? {
+        val start = raw.indexOf('{')
+        val end = raw.lastIndexOf('}')
+        if (start < 0 || end <= start) return null
+        return try {
+            JSONObject(raw.substring(start, end + 1))
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** speak → 仪表盘卡片。锁屏文字和通知栏降级由 WakeManager 自己做了。 */
+    private fun broadcastSpeak(text: String, isEmergency: Boolean) {
+        try {
+            sendBroadcast(
+                Intent(ACTION_ANZHI_SPEAK)
+                    .setPackage(packageName)
+                    .putExtra("text", text)
+                    .putExtra("emergency", isEmergency)
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "speak 广播没发出去（非致命，通知栏卡片已发）: ${e.message}")
+        }
+    }
+
+    // ─────────────────────────────────────
+    // 全局水印（TYPE_APPLICATION_OVERLAY，盖在桌面与所有应用之上）
+    // ─────────────────────────────────────
+
+    private var watermarkView: TextView? = null
+
+    private fun showWatermark() {
+        if (watermarkView != null) return
+        val density = resources.displayMetrics.density
+        val view = TextView(this).apply {
+            text = "enzosphere"
+            setTextColor(android.graphics.Color.WHITE)
+            alpha = 0.42f
+            textSize = 12f
+            letterSpacing = 0.18f
+            // TextView 只有 getShadowRadius/getShadowColor 的 getter，没有独立 setter，
+            // Kotlin 属性是 val；阴影必须走 setShadowLayer(radius, dx, dy, color)
+            setShadowLayer(2f, 0f, 0f, 0x80000000.toInt())
+            typeface = try {
+                resources.getFont(R.font.fusion_pixel)
+            } catch (_: Exception) {
+                Typeface.DEFAULT_BOLD
+            }
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.START
+            x = (16 * density).toInt()
+            y = (96 * density).toInt()
+        }
+        try {
+            (getSystemService(WINDOW_SERVICE) as WindowManager).addView(view, params)
+            watermarkView = view
+            Log.i(TAG, "全局水印已挂上")
+        } catch (e: Exception) {
+            Log.w(TAG, "全局水印挂载失败: ${e.message}")
+        }
+    }
+
+    private fun hideWatermark() {
+        watermarkView?.let {
+            try {
+                (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it)
+            } catch (_: Exception) {
+            }
+        }
+        watermarkView = null
     }
 
     // ─────────────────────────────────────
@@ -549,13 +854,13 @@ class AnzhiManagerService : Service() {
      * 解析 VPS 服务器 URL。
      *
      * 优先级（从高到低）：
-     *   1. SystemProperties（AOSP 系统属性，adb shell setprop persist.anzhi.server_url）
+     *   1. SystemProperties（AOSP 系统属性，adb shell setprop persist.vendor.anzhi.server_url）
      *   2. SharedPreferences（运行时配置，adb shell 修改）
      *   3. 编译期默认值
      */
     private fun resolveServerUrl(): String {
         // 1. 尝试 SystemProperties（需 platform_apis）
-        val propValue = SystemProperties.get("persist.anzhi.server_url", "")
+        val propValue = SystemProperties.get("persist.vendor.anzhi.server_url", "")
         if (propValue.isNotBlank()) {
             Log.i(TAG, "从 SystemProperties 读取 server URL: $propValue")
             return propValue
@@ -580,6 +885,20 @@ class AnzhiManagerService : Service() {
 
     private fun connectToServer() {
         val url = resolveServerUrl()
+
+        // 未配置就不连：ANZHI_SERVER_URL_DEFAULT 里的 "your-vps-ip" 是文档占位符，
+        // VPS 侧根本没有 WebSocket 服务（8080 只绑 127.0.0.1，见 SYSTEM_ENTRIES_PLAN.md §五
+        // "明确不做：persist.anzhi.server_url 填值——填了只会无限重连"）。
+        // 实机日志证据：刷机后 30 分钟内 AnzhiSocket 已重连 15 次，每次都是
+        // "Unable to resolve host \"your-vps-ip\"" 后 300000ms 再试，永久空转。
+        // README §十三/§十六 的口径也是这套 WebSocket 属旧链路、不在新主链路上。
+        // 需要恢复时：在 SharedPreferences(anzhi_config/server_url) 或
+        // persist.vendor.anzhi.server_url 里填真实地址，这条闸门自动放行。
+        if (url.contains("your-vps-ip")) {
+            Log.i(TAG, "WebSocket 旧链路未配置（仍是占位地址 $url）——跳过连接，不再无限重连")
+            return
+        }
+
         socket = AnzhiSocket(url, deviceId).also { s ->
             s.statusCallback = { status ->
                 Log.i(TAG, "连接状态: $status")
@@ -610,7 +929,7 @@ class AnzhiManagerService : Service() {
      * 初始化 CC 供应者。
      *
      * API Key 优先级：
-     *   1. SystemProperties（persist.anzhi.deepseek_key / persist.anzhi.gemini_key）
+     *   1. SystemProperties（persist.vendor.anzhi.deepseek_key / persist.vendor.anzhi.gemini_key）
      *   2. BuildConfig（编译时打入）
      *   3. SharedPreferences（运行时配置）
      */

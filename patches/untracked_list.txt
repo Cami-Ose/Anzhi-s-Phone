@@ -1,0 +1,4 @@
+=== untracked in device/google/bluejay ===
+BoardConfig_anzhi.mk
+overlay/frameworks/base/core/res/res/values/config.xml
+sepolicy/file_contexts

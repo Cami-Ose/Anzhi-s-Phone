@@ -1,0 +1,56 @@
+diff --git a/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/KeyguardIndicationArea.kt b/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/KeyguardIndicationArea.kt
+index 6748a358fb3b..20051721a897 100644
+--- a/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/KeyguardIndicationArea.kt
++++ b/packages/SystemUI/src/com/android/systemui/keyguard/ui/view/KeyguardIndicationArea.kt
+@@ -20,11 +20,13 @@ package com.android.systemui.keyguard.ui.view
+ import android.content.Context
+ import android.text.TextUtils
+ import android.util.AttributeSet
++import android.util.Log
+ import android.view.Gravity
+ import android.view.View
+ import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+ import android.widget.LinearLayout
++import android.widget.TextView
+ import com.android.systemui.res.R
+ import com.android.systemui.statusbar.phone.KeyguardIndicationTextView
+ 
+@@ -42,6 +44,13 @@ class KeyguardIndicationArea(context: Context, private val attrs: AttributeSet?)
+                 gravity = Gravity.CENTER_HORIZONTAL
+             },
+         )
++        addView(
++            anzhiWelcomeRow(),
++            LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
++                gravity = Gravity.CENTER_HORIZONTAL
++            },
++        )
++        Log.i("AnzhiKeyguard", "KeyguardIndicationArea init")
+     }
+ 
+     override fun setAlpha(alpha: Float) {
+@@ -84,6 +93,23 @@ class KeyguardIndicationArea(context: Context, private val attrs: AttributeSet?)
+         }
+     }
+ 
++    /** 安知锁屏文字条：只读、不吃触摸，不参与上滑与密码面板的手势 */
++    private fun anzhiWelcomeRow(): TextView {
++        return TextView(context, attrs).apply {
++            setTextAppearance(R.style.TextAppearance_Keyguard_BottomArea)
++            gravity = Gravity.CENTER
++            alpha = 0.9f
++            maxLines = 2
++            isClickable = false
++            isLongClickable = false
++            letterSpacing = 0.12f
++            text = "enzosphere\nwelcome home · 欢迎回家"
++
++            val padding = R.dimen.keyguard_indication_text_padding.dp()
++            setPaddingRelative(padding, 0, padding, padding)
++        }
++    }
++
+     private fun Int.dp(): Int {
+         return context.resources.getDimensionPixelSize(this)
+     }

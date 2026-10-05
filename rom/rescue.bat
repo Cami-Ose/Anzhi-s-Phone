@@ -1,8 +1,8 @@
 @echo off
 chcp 65001 >nul
-set FB=fastboot
-set ADB=adb
-set ROM=%~dp0stock
+set FB=D:\adb\platform-tools\fastboot.exe
+set ADB=D:\adb\platform-tools\adb.exe
+set ROM=C:\Anzhi's Phone\rom\stock
 
 echo ===== 接力脚本：stock boot → ADB → fastbootd → flash system =====
 echo 把手机放到一边，它会自动循环等设备出现

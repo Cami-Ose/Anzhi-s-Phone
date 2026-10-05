@@ -1,10 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest package="com.anzhi.core">
+<manifest package="com.anzhi.core"
+    xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INJECT_EVENTS" />
     <uses-permission android:name="android.permission.READ_FRAME_BUFFER" />
+    <!-- moveTaskToFront 走 IActivityTaskManager，ATMS 里 enforceCallingPermission(REORDER_TASKS)；
+         normal 级，装上即授予，不需要 priv-app 白名单条目 -->
+    <uses-permission android:name="android.permission.REORDER_TASKS" />
+    <!-- moveRootTaskToDisplay：ATMS:3353 enforceCallingPermission(INTERNAL_SYSTEM_WINDOW)。
+         protectionLevel = signature|module|recents，platform 签名即授予，不进白名单 -->
+    <uses-permission android:name="android.permission.INTERNAL_SYSTEM_WINDOW" />
+    <!-- getTasks 的闸门在 ATMS:3645 isGetTasksAllowed(REAL_GET_TASKS)，缺它不报错但结果被裁窄。
+         signature|recents，platform 签名即授予，不进白名单 -->
+    <uses-permission android:name="android.permission.MANAGE_ACTIVITY_TASKS" />
+    <!-- 同上 getTasks 的正解：REAL_GET_TASKS。protectionLevel = signature|privileged，
+         带 privileged 位 → 必须逐条进 priv-app 白名单，否则开机 SystemConfig 致命 -->
+    <uses-permission android:name="android.permission.REAL_GET_TASKS" />
+    <!-- 这个服务对外提供输入注入 / 任务操作，绝不能让任意 app bind 走。
+         signature 级 = 只有与 AnzhiCore 同签名（platform key）的 app 才会被自动授予。
+         自定义权限不需要进 privapp-permissions 白名单：白名单只针对 framework 里定义的
+         signature|privileged 权限（AccessCheckingService.kt:1500，白名单包名恒为 "android"）。 -->
+    <permission
+        android:name="com.anzhi.permission.CORE_SERVICE"
+        android:protectionLevel="signature" />
+
     <application android:label="Anzhi Core Services">
         <service
             android:name=".AnzhiCoreService"
+            android:permission="com.anzhi.permission.CORE_SERVICE"
             android:exported="true"
             android:process=":core" />
     </application>
